@@ -10,20 +10,43 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html, body, #root {
   margin: 0;
   padding: 0;
   min-height: 100vh;
-  background-color: #0B1B2B;
-  color: #E8EEF5;
+  background-color: #F5F7FA;
+  color: #0F172A;
 }
 
 #root {
   display: flex;
   flex-direction: column;
+}
+
+/* 金属质感主背景 - 多层叠加：渐变 + 拉丝纹理 */
+body {
+  background:
+    /* 细微的金属高光斜线 - 模拟拉丝效果 */
+    repeating-linear-gradient(
+      135deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(255, 255, 255, 0.4) 2px,
+      rgba(255, 255, 255, 0.4) 3px
+    ),
+    /* 主渐变 - 三段过渡营造金属反光 */
+    linear-gradient(
+      135deg,
+      #F5F7FA 0%,
+      #E8EBF0 35%,
+      #F5F7FA 50%,
+      #DDE1E8 85%,
+      #F5F7FA 100%
+    );
+  background-attachment: fixed;
 }
 
 /* Custom scrollbar */
@@ -32,10 +55,10 @@ html, body, #root {
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #0F2238;
+  background: #FAFBFC;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(201, 169, 97, 0.3);
+  background: rgba(15, 23, 42, 0.18);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -45,10 +68,10 @@ html, body, #root {
 /* Selection */
 ::selection {
   background: rgba(201, 169, 97, 0.3);
-  color: #E8EEF5;
+  color: #0F172A;
 }
 
-/* Focus rings - subtle gold */
+/* Focus rings - 金色 */
 *:focus-visible {
   outline: 2px solid rgba(201, 169, 97, 0.5);
   outline-offset: 2px;
@@ -67,9 +90,35 @@ html {
   -webkit-text-fill-color: transparent;
 }
 
-/* Glass card effect */
+/* Glass card effect - 浅色版本（毛玻璃白） */
 .glass {
-  background: rgba(20, 40, 64, 0.7);
+  background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* 金属光泽按钮/卡片增强（在 hover 时使用） */
+.metallic-shine {
+  position: relative;
+  overflow: hidden;
+}
+.metallic-shine::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.6) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.metallic-shine:hover::before {
+  opacity: 1;
+  animation: shimmer 1.5s ease-out;
 }
