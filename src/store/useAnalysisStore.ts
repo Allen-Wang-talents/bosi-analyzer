@@ -11,7 +11,7 @@ import type {
 import { DEFAULT_SCHOOL_TIERS, DEFAULT_COMPANY_TIERS, DEFAULT_WEIGHTS } from '@/data/tierTemplate';
 import { runFullScoring } from '@/lib/aggregate';
 import { askQuestion } from '@/lib/qaEngine';
-import { setApiKeyGetter, ApiKeyMissingError } from '@/lib/llmClient';
+import { setApiKeyGetter, ApiKeyMissingError, checkServerHealth } from '@/lib/llmClient';
 
 const HISTORY_LIMIT = 50;
 const STORAGE_KEY = 'bosi:analyzer:v1';
@@ -44,6 +44,8 @@ type State = {
 
   // API 状态
   apiKeyStatus: ApiKeyStatus;
+  serverAvailable: boolean;       // 后端 /api/chat 是否可用
+  serverModel: string | null;     // 后端报告的模型名
 };
 
 type Actions = {
@@ -64,6 +66,7 @@ type Actions = {
   exportTierConfig: () => void;
   setApiKeyStatus: (s: ApiKeyStatus) => void;
   validateApiKeyStatus: () => Promise<void>;
+  checkServerStatus: () => Promise<void>;
 
   addChatMessage: (m: ChatMessage) => void;
   clearChat: () => void;
@@ -89,6 +92,8 @@ const initialState: State = {
   chat: [],
   chatSending: false,
   apiKeyStatus: 'missing',
+  serverAvailable: false,
+  serverModel: null,
 };
 
 // Debounce timer
@@ -181,7 +186,6 @@ export const useAnalysisStore = create<State & Actions>()(
           analysis: rec.analysis ?? null,
           chat: [],
         });
-        // 立即重算（用当前权重）
         setTimeout(() => get().runAnalysis(), 0);
       },
 
@@ -193,7 +197,6 @@ export const useAnalysisStore = create<State & Actions>()(
 
       updateSettings: (patch) => {
         set((s) => ({ settings: { ...s.settings, ...patch } }));
-        // 权重变化时重算
         if (patch.weights) {
           scheduleRecompute(get, 0);
         }
@@ -206,7 +209,6 @@ export const useAnalysisStore = create<State & Actions>()(
           if (data.companyTiers) patch.companyTiers = data.companyTiers;
           if (data.weights) patch.weights = data.weights;
           get().updateSettings(patch);
-          // 重算
           scheduleRecompute(get, 0);
           return true;
         } catch (e) {
@@ -238,7 +240,9 @@ export const useAnalysisStore = create<State & Actions>()(
       validateApiKeyStatus: async () => {
         const key = get().settings.anthropicApiKey.trim();
         if (!key) {
-          set({ apiKeyStatus: 'missing' });
+          // 没填 key → 看服务器是否可用
+          const { serverAvailable } = get();
+          set({ apiKeyStatus: serverAvailable ? 'configured' : 'missing' });
           return;
         }
         try {
@@ -250,6 +254,19 @@ export const useAnalysisStore = create<State & Actions>()(
         }
       },
 
+      checkServerStatus: async () => {
+        const result = await checkServerHealth();
+        set({
+          serverAvailable: result.available,
+          serverModel: result.model ?? null,
+        });
+        // 同步 apiKeyStatus: 若用户没填 key，按服务器状态决定
+        const key = get().settings.anthropicApiKey.trim();
+        if (!key) {
+          set({ apiKeyStatus: result.available ? 'configured' : 'missing' });
+        }
+      },
+
       addChatMessage: (m) => set((s) => ({ chat: [...s.chat, m] })),
 
       clearChat: () => set({ chat: [] }),
@@ -258,7 +275,6 @@ export const useAnalysisStore = create<State & Actions>()(
         const { analysis, company, jd, profile, candidate } = get();
         if (!analysis) return;
 
-        // 添加用户消息
         const userMsg: ChatMessage = {
           id: `msg-${Date.now()}-user`,
           role: 'user',
@@ -268,7 +284,6 @@ export const useAnalysisStore = create<State & Actions>()(
         get().addChatMessage(userMsg);
         set({ chatSending: true });
 
-        // 异步调用 LLM
         const answerMsg = await askQuestion(question, {
           analysis,
           company,
@@ -279,19 +294,10 @@ export const useAnalysisStore = create<State & Actions>()(
 
         get().addChatMessage(answerMsg);
         set({ chatSending: false });
-
-        // 保存到历史（首次提问时）
-        if (get().history.length === 0 || get().history[0].timestamp !== get().history[0]?.timestamp) {
-          // 仅在分析有效时记录
-          if (analysis) {
-            // 不重复保存，由用户主动操作
-          }
-        }
       },
     }),
     {
       name: STORAGE_KEY,
-      // 只持久化必要部分（chat 不持久化，避免长会话膨胀）
       partialize: (state) => ({
         company: state.company,
         jd: state.jd,
@@ -302,11 +308,10 @@ export const useAnalysisStore = create<State & Actions>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          // 设置 API Key getter
           setApiKeyGetter(() => state.settings.anthropicApiKey);
-          // 初始化 API Key 状态
           const key = state.settings.anthropicApiKey?.trim();
-          state.apiKeyStatus = key ? 'configured' : 'missing';
+          if (key) state.apiKeyStatus = 'configured';
+          // app 启动后会自动 checkServerStatus
         }
       },
     }
@@ -328,16 +333,25 @@ function scheduleRecompute(get: () => State & Actions, delay = RECOMPUTE_DELAY) 
 // =====================================================
 setApiKeyGetter(() => useAnalysisStore.getState().settings.anthropicApiKey);
 
-// 监听 settings.anthropicApiKey 变化，同步 getter
+// app 启动时立即检查后端状态
+if (typeof window !== 'undefined') {
+  // 等 hydrate 完成
+  setTimeout(() => {
+    useAnalysisStore.getState().checkServerStatus();
+  }, 100);
+}
+
+// 监听 settings.anthropicApiKey 变化，同步 getter 和状态
 useAnalysisStore.subscribe((state, prev) => {
   if (state.settings.anthropicApiKey !== prev.settings.anthropicApiKey) {
     setApiKeyGetter(() => state.settings.anthropicApiKey);
-    // 同步 apiKeyStatus
     const key = state.settings.anthropicApiKey.trim();
     if (!key) {
-      useAnalysisStore.setState({ apiKeyStatus: 'missing' });
-    } else if (state.apiKeyStatus === 'missing' || state.apiKeyStatus === 'invalid') {
-      // 设为 configured 等待下次验证
+      // 没 key 时按服务器状态决定
+      useAnalysisStore.setState({
+        apiKeyStatus: state.serverAvailable ? 'configured' : 'missing',
+      });
+    } else if (state.apiKeyStatus === 'missing') {
       useAnalysisStore.setState({ apiKeyStatus: 'configured' });
     }
   }

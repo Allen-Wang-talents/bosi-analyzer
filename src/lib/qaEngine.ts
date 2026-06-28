@@ -1,5 +1,5 @@
 // =====================================================
-// QA 引擎 - 调度 question 到 LLM
+// QA 引擎 - 调度 question 到 LLM (走 /api/chat 后端代理)
 // =====================================================
 import type { ChatMessage } from '@/types';
 import { askAboutAnalysis, ApiKeyMissingError, type AskContext } from './llmClient';
@@ -31,7 +31,7 @@ export async function askQuestion(
         ...pendingMsg,
         pending: false,
         error: true,
-        content: '⚠️ 请先在设置中配置 MiniMax M3 API Key 才能使用对话功能。\n\n设置路径：右上角 ⚙️ 设置 → API Key',
+        content: `⚠️ AI 服务暂不可用\n\n${e.message}\n\n请联系管理员检查 Vercel 项目配置（MINIMAX_API_KEY 环境变量）。`,
       };
     }
     const errMsg = e instanceof Error ? e.message : String(e);
@@ -39,7 +39,7 @@ export async function askQuestion(
       ...pendingMsg,
       pending: false,
       error: true,
-      content: `调用失败: ${errMsg}\n\n请检查：1) API Key 是否正确；2) 网络是否通畅；3) 是否欠费。`,
+      content: `调用失败: ${errMsg}\n\n请检查网络连接后重试。`,
     };
   }
 }

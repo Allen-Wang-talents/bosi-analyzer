@@ -63,14 +63,14 @@ function ApiKeyDot({ status }: { status: ApiKeyStatus }) {
     invalid: 'bg-status-yellow',
   };
   const labels = {
-    configured: '已配置',
-    missing: '未配置',
-    invalid: '异常',
+    configured: 'AI 可用',
+    missing: 'AI 未配置',
+    invalid: 'AI 异常',
   };
   return (
     <span className="ml-1 inline-flex items-center gap-1 text-[10px] text-fg-muted">
       <span className={`w-1.5 h-1.5 rounded-full ${colors[status]}`} />
-      <span className="hidden sm:inline">API {labels[status]}</span>
+      <span className="hidden sm:inline">{labels[status]}</span>
     </span>
   );
 }

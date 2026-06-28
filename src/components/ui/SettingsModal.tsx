@@ -93,7 +93,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
 }
 
 // =====================================================
-// API Key Tab
+// API Key Tab - 后端中转 + 可选 override
 // =====================================================
 function ApiKeyTab({ settings, updateSettings }: { settings: any; updateSettings: any }) {
   const [key, setKey] = useState(settings.anthropicApiKey ?? '');
@@ -101,12 +101,16 @@ function ApiKeyTab({ settings, updateSettings }: { settings: any; updateSettings
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null);
   const apiKeyStatus = useAnalysisStore((s) => s.apiKeyStatus);
+  const serverAvailable = useAnalysisStore((s) => s.serverAvailable);
+  const serverModel = useAnalysisStore((s) => s.serverModel);
+  const checkServerStatus = useAnalysisStore((s) => s.checkServerStatus);
   const setApiKeyStatus = useAnalysisStore((s) => s.setApiKeyStatus);
+  const [recheckLoading, setRecheckLoading] = useState(false);
 
   const handleSave = () => {
     updateSettings({ anthropicApiKey: key.trim() });
     if (key.trim()) setApiKeyStatus('configured');
-    else setApiKeyStatus('missing');
+    else setApiKeyStatus(serverAvailable ? 'configured' : 'missing');
   };
 
   const handleTest = async () => {
@@ -130,63 +134,116 @@ function ApiKeyTab({ settings, updateSettings }: { settings: any; updateSettings
     }
   };
 
+  const handleClear = () => {
+    setKey('');
+    updateSettings({ anthropicApiKey: '' });
+    setApiKeyStatus(serverAvailable ? 'configured' : 'missing');
+  };
+
+  const handleRecheck = async () => {
+    setRecheckLoading(true);
+    await checkServerStatus();
+    setRecheckLoading(false);
+  };
+
   return (
     <div className="space-y-4">
       <div>
-        <h4 className="text-sm font-semibold text-fg mb-2">MiniMax M3 API Key</h4>
+        <h4 className="text-sm font-semibold text-fg mb-2">AI 能力</h4>
         <p className="text-xs text-fg-muted leading-relaxed">
-          用于驱动 Chat 面板的 AI 问答。Key 仅保存在你的浏览器 localStorage，不上传任何服务器。
-          <a href="https://api.minimaxi.com/" target="_blank" rel="noreferrer" className="text-accent-gold hover:underline ml-1">
-            MiniMax 控制台 →
-          </a>
+          Chat 面板的 AI 问答由服务器中转调用 MiniMax M3 模型，无需用户配置 Key 即可使用。
         </p>
       </div>
 
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-fg-muted">当前状态:</span>
-        <Badge color={apiKeyStatus === 'configured' ? 'green' : apiKeyStatus === 'invalid' ? 'yellow' : 'red'} variant="soft">
-          {apiKeyStatus === 'configured' ? '已配置' : apiKeyStatus === 'invalid' ? '异常' : '未配置'}
-        </Badge>
-      </div>
-
-      <div className="relative">
-        <Input
-          label="API Key"
-          placeholder="sk-..."
-          type={show ? 'text' : 'password'}
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-        <button
-          onClick={() => setShow(!show)}
-          className="absolute right-3 top-9 text-fg-muted hover:text-fg"
-          type="button"
-        >
-          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
-      </div>
-
-      <div className="flex gap-2">
-        <Button onClick={handleSave}>保存</Button>
-        <Button variant="secondary" onClick={handleTest} loading={testing}>
-          验证可用性
-        </Button>
-      </div>
-
-      {testResult === 'success' && (
-        <div className="flex items-center gap-2 text-xs text-status-green bg-status-green/10 p-3 rounded-lg border border-status-green/30">
-          <CheckCircle2 className="w-4 h-4" /> API Key 验证成功
+      {/* 服务器中转状态 */}
+      <div className="bg-accent-goldGlow border border-accent-gold/30 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className={cn(
+              'w-2 h-2 rounded-full',
+              serverAvailable ? 'bg-status-green' : 'bg-status-red'
+            )} />
+            <span className="text-xs font-medium text-fg">
+              后端中转 {serverAvailable ? '可用' : '不可用'}
+            </span>
+          </div>
+          <Button size="sm" variant="ghost" onClick={handleRecheck} loading={recheckLoading}>
+            重新检测
+          </Button>
         </div>
-      )}
-      {testResult === 'fail' && (
-        <div className="flex items-center gap-2 text-xs text-status-red bg-status-red/10 p-3 rounded-lg border border-status-red/30">
-          <AlertCircle className="w-4 h-4" /> 验证失败，请检查 Key 是否正确
+        <div className="text-xs text-fg-muted leading-relaxed space-y-1">
+          {serverAvailable ? (
+            <>
+              <p>✓ 模型: <span className="text-fg font-medium">{serverModel || 'MiniMax-M3'}</span></p>
+              <p>✓ 所有用户共享同一 Key，按 IP 限流 30 次/分钟</p>
+            </>
+          ) : (
+            <p className="text-status-red">⚠️ Vercel 环境变量 <code className="text-fg">MINIMAX_API_KEY</code> 未配置。请联系管理员。</p>
+          )}
         </div>
-      )}
+      </div>
 
-      <div className="bg-bg-base/50 rounded-lg p-4 text-xs text-fg-muted leading-relaxed">
-        <p className="font-medium text-fg mb-2">⚠️ 安全提示</p>
-        <p>由于这是浏览器端直连，API Key 存在本地浏览器。请仅在个人设备上使用，不要部署到公网。</p>
+      {/* 用户自定义 Key - 可选 override */}
+      <div className="border-t border-border pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <h5 className="text-xs font-semibold text-fg">自定义 API Key（可选）</h5>
+          {key && (
+            <Button size="sm" variant="ghost" onClick={handleClear}>
+              <Trash2 className="w-3 h-3" /> 清除
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-fg-muted leading-relaxed mb-3">
+          高级用户可填入自己的 Key 跳过服务器中转（直连 MiniMax M3）。Key 仅存浏览器 localStorage。
+        </p>
+
+        <div className="relative">
+          <Input
+            label="API Key"
+            placeholder="sk-...（留空使用服务器中转）"
+            type={show ? 'text' : 'password'}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          <button
+            onClick={() => setShow(!show)}
+            className="absolute right-3 top-9 text-fg-muted hover:text-fg"
+            type="button"
+          >
+            {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+
+        <div className="flex gap-2 mt-2">
+          <Button onClick={handleSave}>保存</Button>
+          <Button variant="secondary" onClick={handleTest} loading={testing} disabled={!key.trim()}>
+            验证可用性
+          </Button>
+        </div>
+
+        {testResult === 'success' && (
+          <div className="flex items-center gap-2 text-xs text-status-green bg-status-green/10 p-3 rounded-lg border border-status-green/30 mt-2">
+            <CheckCircle2 className="w-4 h-4" /> 自定义 Key 验证成功
+          </div>
+        )}
+        {testResult === 'fail' && (
+          <div className="flex items-center gap-2 text-xs text-status-red bg-status-red/10 p-3 rounded-lg border border-status-red/30 mt-2">
+            <AlertCircle className="w-4 h-4" /> 验证失败，请检查 Key 是否正确
+          </div>
+        )}
+      </div>
+
+      <div className="bg-bg-elevated rounded-lg p-3 text-xs text-fg-muted leading-relaxed">
+        <p>
+          <span className="text-fg font-medium">当前模式:</span>{' '}
+          {key.trim() ? '浏览器直连 MiniMax (自定义 Key)' : serverAvailable ? '服务器中转 (共享 Key)' : '未配置'}
+        </p>
+        <p className="mt-1">
+          <span className="text-fg font-medium">状态:</span>{' '}
+          <Badge color={apiKeyStatus === 'configured' ? 'green' : apiKeyStatus === 'invalid' ? 'yellow' : 'red'} variant="soft">
+            {apiKeyStatus === 'configured' ? '可用' : apiKeyStatus === 'invalid' ? '异常' : '未配置'}
+          </Badge>
+        </p>
       </div>
     </div>
   );
