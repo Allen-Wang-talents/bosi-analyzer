@@ -1,6 +1,6 @@
 # 博思人才评荐网 (Bosi Talent Recommendation Network)
 
-猎头顾问专用简历与岗位匹配度智能分析工具。**在线访问**：<https://bosi-talent-analyzer.vercel.app>
+猎头顾问专用简历与岗位匹配度智能分析工具。**在线访问**：<https://bosi-analyzer.vercel.app>
 
 ## 功能
 
