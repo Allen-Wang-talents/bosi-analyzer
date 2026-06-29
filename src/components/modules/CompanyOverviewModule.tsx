@@ -23,16 +23,17 @@ const SIZE_OPTIONS = [
 
 const STAGE_OPTIONS = [
   { value: '', label: '请选择' },
-  { value: '未融资', label: '未融资' },
+  { value: '种子轮', label: '种子轮' },
   { value: '天使轮', label: '天使轮' },
-  { value: 'Pre-A', label: 'Pre-A' },
+  { value: 'pre-A轮', label: 'pre-A 轮' },
   { value: 'A轮', label: 'A 轮' },
+  { value: 'A+轮', label: 'A+ 轮' },
   { value: 'B轮', label: 'B 轮' },
+  { value: 'B+轮', label: 'B+ 轮' },
   { value: 'C轮', label: 'C 轮' },
-  { value: 'D轮+', label: 'D 轮及以上' },
-  { value: '已上市', label: '已上市' },
-  { value: '已退市', label: '已退市' },
-  { value: '被收购', label: '被收购' },
+  { value: '战略融资', label: '战略融资' },
+  { value: 'pre-IPO', label: 'pre-IPO' },
+  { value: 'IPO', label: 'IPO' },
 ];
 
 export function CompanyOverviewModule({ value, onChange }: Props) {

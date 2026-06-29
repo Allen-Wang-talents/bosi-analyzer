@@ -7,7 +7,7 @@ export type Company = {
   name: string;
   industry: string;
   size: string;             // "100-500" / "1000+" / etc.
-  stage: string;            // 融资阶段: "未融资" / "天使" / "A轮" / "B轮" / "C轮" / "D轮+" / "上市" / "已退市"
+  stage: string;            // 融资阶段: "种子轮" / "天使轮" / "pre-A轮" / "A轮" / "A+轮" / "B轮" / "B+轮" / "C轮" / "战略融资" / "pre-IPO" / "IPO"
   business: string;         // 主营业务
   products: string;         // 关键产品
   website?: string;
