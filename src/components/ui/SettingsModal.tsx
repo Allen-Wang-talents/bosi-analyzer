@@ -41,7 +41,7 @@ export function SettingsModal({ open, onClose }: Props) {
           className={cn(
             'w-full max-w-2xl max-h-[90vh] bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col',
             'transform transition-all duration-300 pointer-events-auto',
-            open ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
+            open ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
           )}
           onClick={(e) => e.stopPropagation()}
         >

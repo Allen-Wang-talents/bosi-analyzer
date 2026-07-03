@@ -140,7 +140,7 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 
 export function Input({ label, error, hint, className, ...rest }: InputProps) {
   return (
-    <div className="w-full">
+    <div className={cn('w-full', className)}>
       {label && (
         <label className="block text-xs font-medium text-fg-muted mb-1.5">{label}</label>
       )}
@@ -150,8 +150,7 @@ export function Input({ label, error, hint, className, ...rest }: InputProps) {
           'placeholder:text-fg-subtle',
           'focus:outline-none focus:border-accent-gold/50 focus:ring-1 focus:ring-accent-gold/30',
           'transition-all duration-150',
-          error && 'border-status-red/50 focus:border-status-red',
-          className
+          error && 'border-status-red/50 focus:border-status-red'
         )}
         {...rest}
       />
@@ -175,7 +174,7 @@ export function TextArea({ label, error, hint, showCharCount, className, value, 
   const charCount = typeof value === 'string' ? value.length : 0;
 
   return (
-    <div className="w-full">
+    <div className={cn('w-full', className)}>
       {label && (
         <label className="block text-xs font-medium text-fg-muted mb-1.5">{label}</label>
       )}
@@ -185,8 +184,7 @@ export function TextArea({ label, error, hint, showCharCount, className, value, 
           'placeholder:text-fg-subtle',
           'focus:outline-none focus:border-accent-gold/50 focus:ring-1 focus:ring-accent-gold/30',
           'transition-all duration-150 leading-relaxed',
-          error && 'border-status-red/50 focus:border-status-red',
-          className
+          error && 'border-status-red/50 focus:border-status-red'
         )}
         value={value}
         maxLength={maxLength}
