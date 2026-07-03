@@ -5,7 +5,7 @@
 import type { ScoreResult, Company, JD, JobProfile, Candidate } from '@/types';
 import { serializeForLLM } from './formatReport';
 
-const SYSTEM_PROMPT = `你是博思人才评荐网的 AI 助手，服务于资深猎头顾问。你将收到一份结构化的候选人匹配分析数据，包括公司信息、岗位 JD、岗位画像、候选人简历解析、以及 4 个维度的评分与依据。
+const SYSTEM_PROMPT = `你是博思AI人才评荐网的 AI 助手，服务于资深猎头顾问。你将收到一份结构化的候选人匹配分析数据，包括公司信息、岗位 JD、岗位画像、候选人简历解析、以及 4 个维度的评分与依据。
 
 请基于这些数据回答顾问的问题。回答要求：
 1. 使用中文，专业猎头口吻，简洁有力

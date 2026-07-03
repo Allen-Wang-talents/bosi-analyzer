@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 博思人才评荐网 - 铂金银金属质感主题 (Platinum Silver)
+        // 博思AI人才评荐网 - 铂金银金属质感主题 (Platinum Silver)
         bg: {
           base: '#F5F7FA',     // 主背景 - 浅金属灰
           card: '#FFFFFF',      // 卡片背景 - 纯白微反光

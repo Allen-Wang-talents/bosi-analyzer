@@ -31,9 +31,9 @@ export function Header({ apiKeyStatus }: Props) {
             </div>
             <div className="leading-tight">
               <h1 className="text-xl font-bold font-serif text-gold-gradient">
-                博思人才评荐网
+                博思AI人才评荐网
               </h1>
-              <p className="text-[11px] text-fg-muted tracking-[0.2em] uppercase font-medium">BOSI TALENT</p>
+              <p className="text-[11px] text-fg-muted tracking-[0.2em] uppercase font-medium">BOSS AI TALENT</p>
             </div>
           </div>
 
