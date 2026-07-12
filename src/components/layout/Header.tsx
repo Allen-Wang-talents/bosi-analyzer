@@ -22,14 +22,11 @@ export function Header({ apiKeyStatus }: Props) {
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3.5">
-            <div className="w-14 h-14 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)]">
+            <div className="h-12 px-2 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)]">
               <img
-                src="/logo.svg"
-                alt="博思 Logo"
-                className="w-12 h-12 object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = '/favicon.svg';
-                }}
+                src="/bosi-logo.png"
+                alt="博思人才 BOSHR Logo"
+                className="h-10 w-auto object-contain"
               />
             </div>
             <div className="leading-tight">
