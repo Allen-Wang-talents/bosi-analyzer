@@ -24,9 +24,12 @@ export function Header({ apiKeyStatus }: Props) {
           <div className="flex items-center gap-3.5">
             <div className="w-14 h-14 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)]">
               <img
-                src="https://aka.doubaocdn.com/s/nl9E1wgLbm"
+                src="/logo.svg"
                 alt="博思 Logo"
                 className="w-12 h-12 object-contain"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = '/favicon.svg';
+                }}
               />
             </div>
             <div className="leading-tight">
