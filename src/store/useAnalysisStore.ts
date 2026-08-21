@@ -10,6 +10,7 @@ import type {
 } from '@/types';
 import { DEFAULT_SCHOOL_TIERS, DEFAULT_COMPANY_TIERS, DEFAULT_WEIGHTS } from '@/data/tierTemplate';
 import { runFullScoring } from '@/lib/aggregate';
+import { isCandidateSparse } from '@/lib/candidateValid';
 import { askQuestion } from '@/lib/qaEngine';
 import { setApiKeyGetter, ApiKeyMissingError, checkServerHealth, polishSummary } from '@/lib/llmClient';
 
@@ -131,7 +132,9 @@ export const useAnalysisStore = create<State & Actions>()(
 
       runAnalysis: () => {
         const { candidate, jd, profile, company, settings } = get();
-        if (!candidate || !jd) {
+        // Allen 2026-08-21: 缺少必要输入 (JD 或 candidate) → 不评分
+        // Allen 2026-08-21: candidate 信息稀疏 (≥3 关键字段缺失) → 不评分, 强制用户手动补充
+        if (!candidate || !jd || isCandidateSparse(candidate)) {
           set({ analysis: null });
           return;
         }

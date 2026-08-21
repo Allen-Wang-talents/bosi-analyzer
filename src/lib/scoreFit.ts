@@ -4,6 +4,7 @@
 import type { Candidate, JD, DimensionResult } from '@/types';
 import { findMatches } from './match';
 import { clamp, intersection } from './normalize';
+import { getSparseCount } from './candidateValid';
 
 export function scoreFit(
   candidate: Candidate,
@@ -31,13 +32,7 @@ export function scoreFit(
   //
   // 判定: 4 个关键信号 (skills / workHistory / currentTitle / totalYears) 中
   //   缺失 ≥ 3 个 → 候选人实质信息不足, 跑公式只会得到噪音低分
-  const sparseSignals = [
-    !candidate.skills || candidate.skills.length === 0,
-    !candidate.workHistory || candidate.workHistory.length === 0,
-    !candidate.currentTitle,
-    !candidate.totalYears || candidate.totalYears === 0,
-  ];
-  const sparseCount = sparseSignals.filter(Boolean).length;
+  const sparseCount = getSparseCount(candidate);
   if (sparseCount >= 3) {
     return {
       name: 'fit',

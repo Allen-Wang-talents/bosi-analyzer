@@ -192,10 +192,10 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     setPatchSkills('');
   };
 
-  // 解析失败时自动展开补充面板
+  // 解析失败 / candidate 信息稀疏时自动展开补充面板
   useEffect(() => {
-    if (error) setSupplementOpen(true);
-  }, [error]);
+    if (error || missing) setSupplementOpen(true);
+  }, [error, missing]);
 
   // ===========================================
   // 剪贴板粘贴支持 (Ctrl+V)
@@ -248,7 +248,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   }, [parsing, runParse, handleProgress]);
 
   return (
-    <div ref={cardRef}>
+    <div ref={cardRef} data-module="resume-upload">
       <Card>
         <CardHeader
           icon={<Upload className="w-5 h-5" />}

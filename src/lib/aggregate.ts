@@ -11,6 +11,11 @@ import { scoreProjects } from './scoreProjects';
 import { scoreFit } from './scoreFit';
 import { scoreAge } from './scoreAge';
 
+// Allen 2026-08-21: 评分下限 — 任何维度的分数不得低于 50 (兜底分).
+//   即使 deal-breaker / 年龄过大 / 信息残缺导致原始分低于 50,
+//   也强制 floor 到 50, 保证推荐档位不为"不推荐".
+const MIN_DIMENSION_SCORE = 50;
+
 export function aggregateScore(
   dimensions: DimensionResult[],
   weights: Weights,
@@ -30,19 +35,27 @@ export function aggregateScore(
     age: (weights.age ?? 0) / 100,
   };
 
+  // Floor 50: 任何维度原始分 < 50 强制拉到 50
+  const flooredDims: DimensionResult[] = dimensions.map((d) => {
+    if (d.score < MIN_DIMENSION_SCORE) {
+      return { ...d, score: MIN_DIMENSION_SCORE };
+    }
+    return d;
+  });
+
   // 更新 dimension 的 weight 字段
-  dimensions.forEach((d) => {
+  flooredDims.forEach((d) => {
     d.weight = w[d.name];
   });
 
-  const total = dimensions.reduce((s, d) => s + d.score * w[d.name], 0);
+  const total = flooredDims.reduce((s, d) => s + d.score * w[d.name], 0);
   const roundedTotal = Math.round(total * 10) / 10;
 
   const recommendation = recommend(roundedTotal);
 
   return {
     total: roundedTotal,
-    dimensions,
+    dimensions: flooredDims,
     recommendation,
     summary,
     summarySource: 'raw',
