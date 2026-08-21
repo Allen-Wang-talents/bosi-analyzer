@@ -1,9 +1,22 @@
 // =====================================================
 // Module 4: 上传简历
+//
+// Allen 2026-07-30 切换到大模型主导解析:
+//   - 上传后默认走 LLM 解析（精准提取完整结构化信息）
+//   - LLM 失败/超时/服务不可用时静默降级到本地规则解析
+//   - 支持图片 OCR / 扫描件 PDF / HTML / RTF / DOCX / TXT
+//   - 剪贴板粘贴 (Ctrl+V 图片/HTML/文本)
+//
+// Allen 2026-07-22 增强:
+//   - 支持图片 OCR (JPG/PNG/WebP/HEIC)
+//   - 支持 HTML / RTF 简历
+//   - 扫描件 PDF 自动 OCR 兜底
+//   - 剪贴板粘贴 (Ctrl+V 图片/HTML/文本)
+//   - 解析进度展示
 // =====================================================
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown } from 'lucide-react';
+import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles } from 'lucide-react';
 import { Card, CardHeader, CardBody, TextArea, Badge, Button } from '@/components/ui/Card';
 import { parseResume, parseResumeText } from '@/lib/parseResume';
 import type { Candidate } from '@/types';
@@ -13,37 +26,60 @@ type Props = {
   onChange: (value: Candidate | null) => void;
 };
 
+const ACCEPT_MAP = {
+  'application/pdf': ['.pdf'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+  'text/plain': ['.txt', '.md'],
+  'text/html': ['.html', '.htm'],
+  'application/rtf': ['.rtf'],
+  'text/rtf': ['.rtf'],
+  'image/png': ['.png'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/webp': ['.webp'],
+  'image/bmp': ['.bmp'],
+  'image/gif': ['.gif'],
+};
+
 export function ResumeUploadModule({ value, onChange }: Props) {
   const candidate = value;
   const [parsing, setParsing] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
-  const onDrop = useCallback(async (files: File[]) => {
-    const file = files[0];
-    if (!file) return;
+  const runParse = useCallback(async (parseFn: () => Promise<Candidate>) => {
     setError(null);
     setParsing(true);
+    setProgress('正在解析...');
     try {
-      const parsed = await parseResume(file);
+      const parsed = await parseFn();
       onChange(parsed);
+      setProgress(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(`简历解析失败: ${msg}。建议尝试粘贴文本方式。`);
+      setProgress(null);
     } finally {
       setParsing(false);
     }
   }, [onChange]);
 
+  const handleProgress = useCallback((msg: string) => {
+    setProgress(msg);
+  }, []);
+
+  const onDrop = useCallback(async (files: File[]) => {
+    const file = files[0];
+    if (!file) return;
+    await runParse(() => parseResume(file, handleProgress));
+  }, [runParse, handleProgress]);
+
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-      'text/plain': ['.txt', '.md'],
-    },
+    accept: ACCEPT_MAP,
     maxFiles: 1,
-    maxSize: 10 * 1024 * 1024, // 10MB
+    maxSize: 20 * 1024 * 1024, // 20MB（图片 + OCR 体积可能更大）
     disabled: parsing,
     noClick: false,
     noKeyboard: false,
@@ -64,16 +100,67 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     }
   };
 
-  return (
-    <Card>
-      <CardHeader
-        icon={<Upload className="w-5 h-5" />}
-        title="上传简历"
-        subtitle="支持 PDF / DOCX / TXT，客户端解析不上传服务器"
-      />
+  // ===========================================
+  // 剪贴板粘贴支持 (Ctrl+V)
+  // ===========================================
+  useEffect(() => {
+    if (!cardRef.current) return;
+    const el = cardRef.current;
 
-      <CardBody className="space-y-4">
-        {/* Dropzone - 整块可点 + 显式选择按钮 */}
+    const handler = async (ev: ClipboardEvent) => {
+      if (parsing) return;
+      const items = ev.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      // 检查是否有图片或 HTML
+      const hasMedia = Array.from(items).some(
+        (it) => it.type.startsWith('image/') || it.type === 'text/html'
+      );
+      if (!hasMedia) return; // 让浏览器默认处理文本粘贴
+
+      ev.preventDefault();
+      for (const it of Array.from(items)) {
+        const item = it as DataTransferItem;
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        if (file.type.startsWith('image/')) {
+          await runParse(() => parseResume(file, handleProgress));
+          return;
+        }
+      }
+      // HTML 走文本提取
+      const html = ev.clipboardData?.getData('text/html');
+      if (html) {
+        try {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+          const text = (tmp.textContent ?? '').replace(/\s+/g, ' ').trim();
+          if (text) {
+            handlePasteText(text);
+            return;
+          }
+        } catch {
+          // 忽略错误
+        }
+      }
+    };
+
+    el.addEventListener('paste', handler);
+    return () => el.removeEventListener('paste', handler);
+  }, [parsing, runParse, handleProgress]);
+
+  return (
+    <div ref={cardRef}>
+      <Card>
+        <CardHeader
+          icon={<Upload className="w-5 h-5" />}
+          title="上传简历"
+          subtitle="支持 PDF / DOCX / 图片 / HTML / RTF / TXT · 也可 Ctrl+V 粘贴图片"
+        />
+
+        <CardBody className="space-y-4">
+        {/* Dropzone */}
         <div
           {...getRootProps()}
           role="button"
@@ -89,7 +176,20 @@ export function ResumeUploadModule({ value, onChange }: Props) {
           {parsing ? (
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="w-8 h-8 text-accent-gold animate-spin" />
-              <p className="text-sm text-fg-muted">正在解析简历...</p>
+              <p className="text-sm text-fg-muted">{progress ?? '正在解析简历...'}</p>
+              {progress?.includes('OCR') && (
+                <p className="text-xs text-fg-subtle">首次加载 OCR 引擎约需 5-10 秒</p>
+              )}
+              {progress?.includes('AI 智能解析') && (
+                <p className="text-xs text-fg-subtle flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> 大模型解析中，约 5-25 秒
+                </p>
+              )}
+              {progress?.includes('已使用本地规则') && (
+                <p className="text-xs text-status-yellow flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> AI 解析失败，已降级到本地规则
+                </p>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">
@@ -98,7 +198,9 @@ export function ResumeUploadModule({ value, onChange }: Props) {
                 <p className="text-sm text-fg font-medium">
                   {isDragActive ? '松开以上传' : '拖入简历文件 或 点击选择'}
                 </p>
-                <p className="text-xs text-fg-subtle mt-1">PDF / DOCX / TXT · 最大 10MB</p>
+                <p className="text-xs text-fg-subtle mt-1">
+                  PDF · DOCX · 图片(JPG/PNG/WebP) · HTML · RTF · TXT · 最大 20MB
+                </p>
               </div>
               <Button
                 type="button"
@@ -112,6 +214,18 @@ export function ResumeUploadModule({ value, onChange }: Props) {
             </div>
           )}
         </div>
+
+        {/* 支持的格式快捷入口（图标） */}
+        {!parsing && (
+          <div className="flex items-center gap-2 flex-wrap text-xs text-fg-subtle">
+            <span>支持格式：</span>
+            <FormatChip icon={<FileText className="w-3 h-3" />} label="PDF/DOCX" />
+            <FormatChip icon={<ImageIcon className="w-3 h-3" />} label="图片 OCR" />
+            <FormatChip icon={<Code className="w-3 h-3" />} label="HTML" />
+            <FormatChip icon={<FileType2 className="w-3 h-3" />} label="RTF" />
+            <FormatChip icon={<ClipboardPaste className="w-3 h-3" />} label="粘贴(Ctrl+V)" />
+          </div>
+        )}
 
         {/* Error */}
         {error && (
@@ -266,6 +380,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
         )}
       </CardBody>
     </Card>
+    </div>
   );
 }
 
@@ -275,5 +390,14 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="text-xs font-medium text-fg-muted w-20 shrink-0 pt-0.5">{label}</span>
       <div className="flex-1 min-w-0">{children}</div>
     </div>
+  );
+}
+
+function FormatChip({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-bg-elevated border border-border">
+      {icon}
+      <span>{label}</span>
+    </span>
   );
 }

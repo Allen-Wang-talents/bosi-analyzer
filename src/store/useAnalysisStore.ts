@@ -11,7 +11,7 @@ import type {
 import { DEFAULT_SCHOOL_TIERS, DEFAULT_COMPANY_TIERS, DEFAULT_WEIGHTS } from '@/data/tierTemplate';
 import { runFullScoring } from '@/lib/aggregate';
 import { askQuestion } from '@/lib/qaEngine';
-import { setApiKeyGetter, ApiKeyMissingError, checkServerHealth } from '@/lib/llmClient';
+import { setApiKeyGetter, ApiKeyMissingError, checkServerHealth, polishSummary } from '@/lib/llmClient';
 
 const HISTORY_LIMIT = 50;
 const STORAGE_KEY = 'bosi:analyzer:v1';
@@ -41,6 +41,7 @@ type State = {
   // Chat
   chat: ChatMessage[];
   chatSending: boolean;
+  summaryPolishing: boolean;
 
   // API 状态
   apiKeyStatus: ApiKeyStatus;
@@ -71,6 +72,8 @@ type Actions = {
   addChatMessage: (m: ChatMessage) => void;
   clearChat: () => void;
   sendChatQuestion: (question: string) => Promise<void>;
+
+  polishCurrentSummary: () => Promise<void>;
 };
 
 // =====================================================
@@ -91,6 +94,7 @@ const initialState: State = {
   },
   chat: [],
   chatSending: false,
+  summaryPolishing: false,
   apiKeyStatus: 'missing',
   serverAvailable: false,
   serverModel: null,
@@ -294,6 +298,33 @@ export const useAnalysisStore = create<State & Actions>()(
 
         get().addChatMessage(answerMsg);
         set({ chatSending: false });
+      },
+
+      polishCurrentSummary: async () => {
+        const { analysis, company, jd, profile, candidate } = get();
+        if (!analysis) return;
+        if (analysis.summarySource === 'llm') return; // 已是润色版，避免重复
+        set({ summaryPolishing: true });
+        try {
+          const polished = await polishSummary(analysis.summary, {
+            analysis,
+            company,
+            jd,
+            profile,
+            candidate,
+          });
+          if (!polished) {
+            // 空响应回退到骨架
+            return;
+          }
+          const next = { ...analysis, summary: polished, summarySource: 'llm' as const };
+          set({ analysis: next });
+        } catch (e) {
+          console.error('[store] 摘要润色失败:', e);
+          // 保持骨架，不抛错给用户
+        } finally {
+          set({ summaryPolishing: false });
+        }
       },
     }),
     {

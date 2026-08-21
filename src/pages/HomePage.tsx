@@ -26,6 +26,8 @@ export function HomePage() {
   const sendChatQuestion = useAnalysisStore((s) => s.sendChatQuestion);
   const clearChat = useAnalysisStore((s) => s.clearChat);
   const validateApiKeyStatus = useAnalysisStore((s) => s.validateApiKeyStatus);
+  const summaryPolishing = useAnalysisStore((s) => s.summaryPolishing);
+  const polishCurrentSummary = useAnalysisStore((s) => s.polishCurrentSummary);
 
   // 启动时校验 API Key
   useEffect(() => {
@@ -57,6 +59,8 @@ export function HomePage() {
               jd={jd}
               profile={profile}
               candidate={candidate}
+              summaryPolishing={summaryPolishing}
+              onPolishSummary={polishCurrentSummary}
             />
           </div>
         </div>

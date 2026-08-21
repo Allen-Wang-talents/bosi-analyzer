@@ -109,6 +109,7 @@ export type ScoreResult = {
   dimensions: DimensionResult[];
   recommendation: Recommendation;
   summary: string;          // 履历分析摘要
+  summarySource?: 'raw' | 'llm'; // 摘要来源: raw=本地结构化骨架, llm=经 MiniMax 二次润色
   generatedAt: string;      // ISO 时间
 };
 

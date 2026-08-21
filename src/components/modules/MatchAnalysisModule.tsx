@@ -1,7 +1,7 @@
 // =====================================================
 // Module 5: 匹配度分析 (粘性右侧栏 - 核心价值交付)
 // =====================================================
-import { BarChart3, Sparkles, FileText, Copy, Check } from 'lucide-react';
+import { BarChart3, Sparkles, FileText, Copy, Check, Wand2, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Card, CardHeader, CardBody, Button, EmptyState, Badge } from '@/components/ui/Card';
 import { ScoreRing } from '@/components/ui/ScoreRing';
@@ -23,6 +23,9 @@ type Props = {
   jd?: JD | null;
   profile?: JobProfile | null;
   candidate?: Candidate | null;
+  // AI 润色
+  summaryPolishing: boolean;
+  onPolishSummary: () => void;
 };
 
 export function MatchAnalysisModule({
@@ -36,6 +39,8 @@ export function MatchAnalysisModule({
   jd,
   profile,
   candidate,
+  summaryPolishing,
+  onPolishSummary,
 }: Props) {
   const [copied, setCopied] = useState(false);
 
@@ -110,7 +115,35 @@ export function MatchAnalysisModule({
 
             {/* Summary */}
             <div className="bg-bg-base/50 rounded-lg p-4 border border-border">
-              <h4 className="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2">履历分析</h4>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-xs font-semibold text-fg-muted uppercase tracking-wider">履历分析</h4>
+                  {analysis.summarySource === 'llm' ? (
+                    <Badge color="gold" variant="soft" className="text-[10px] py-0">AI 润色版</Badge>
+                  ) : (
+                    <Badge color="gray" variant="soft" className="text-[10px] py-0">结构化骨架</Badge>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onPolishSummary}
+                  disabled={summaryPolishing || analysis.summarySource === 'llm' || apiKeyStatus !== 'configured'}
+                  title={
+                    apiKeyStatus !== 'configured'
+                      ? '请先配置 MiniMax M3 API Key'
+                      : analysis.summarySource === 'llm'
+                      ? '已是润色版'
+                      : '基于 JD + 岗位画像 + 项目/技能命中明细，由 MiniMax M3 二次润色'
+                  }
+                >
+                  {summaryPolishing ? (
+                    <><Loader2 className="w-3.5 h-3.5 animate-spin" /> 润色中...</>
+                  ) : (
+                    <><Wand2 className="w-3.5 h-3.5" /> AI 润色</>
+                  )}
+                </Button>
+              </div>
               <div className="text-sm text-fg leading-relaxed whitespace-pre-wrap">
                 {analysis.summary}
               </div>
