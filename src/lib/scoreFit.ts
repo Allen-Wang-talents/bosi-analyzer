@@ -26,6 +26,31 @@ export function scoreFit(
     };
   }
 
+  // Allen 2026-08-21: candidate 信息残缺到无法跑匹配算法 →
+  //   直接给中性基础分 50, 不跑匹配算法 (公式自然衰减到 27.5, 会拖累总分)
+  //
+  // 判定: 4 个关键信号 (skills / workHistory / currentTitle / totalYears) 中
+  //   缺失 ≥ 3 个 → 候选人实质信息不足, 跑公式只会得到噪音低分
+  const sparseSignals = [
+    !candidate.skills || candidate.skills.length === 0,
+    !candidate.workHistory || candidate.workHistory.length === 0,
+    !candidate.currentTitle,
+    !candidate.totalYears || candidate.totalYears === 0,
+  ];
+  const sparseCount = sparseSignals.filter(Boolean).length;
+  if (sparseCount >= 3) {
+    return {
+      name: 'fit',
+      label: '履历匹配程度评分',
+      score: 50,
+      weight: 0.3,
+      evidence: [`候选人关键字段缺失 ${sparseCount}/4, 按基础分 50 计`],
+      matched: [],
+      missed: jd.mustHaveSkills ?? [],
+      notes: '候选人简历信息较稀疏, 按基础分 50 计。建议人工补充核心字段后重新评分。',
+    };
+  }
+
   // 1. 技能匹配 (40%)
   const jdSkills = [...jd.mustHaveSkills, ...jd.niceToHaveSkills].filter(Boolean);
   const candidateSkills = candidate.skills;

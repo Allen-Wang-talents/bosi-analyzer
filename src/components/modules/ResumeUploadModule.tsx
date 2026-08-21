@@ -16,10 +16,48 @@
 // =====================================================
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles } from 'lucide-react';
-import { Card, CardHeader, CardBody, TextArea, Badge, Button } from '@/components/ui/Card';
+import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles, PencilLine } from 'lucide-react';
+import { Card, CardHeader, CardBody, TextArea, Badge, Button, Input } from '@/components/ui/Card';
 import { parseResume, parseResumeText } from '@/lib/parseResume';
 import type { Candidate } from '@/types';
+
+// Allen 2026-08-21: 解析失败 / 关键字段缺失 → 引导用户手动补充
+type SupplementPatch = {
+  name?: string;
+  totalYears?: number;
+  currentTitle?: string;
+  currentCompany?: string;
+  skills?: string[];
+};
+
+type MissingFields = {
+  name: boolean;
+  totalYears: boolean;
+  currentTitle: boolean;
+  currentCompany: boolean;
+  skills: boolean;
+  education: boolean;
+  workHistory: boolean;
+};
+
+// 判定候选人信息是否"残缺到需要引导用户手动补充"
+function detectMissingFields(c: Candidate | null): MissingFields | null {
+  if (!c) return null;
+  const m: MissingFields = {
+    name: !c.name,
+    totalYears: !c.totalYears,
+    currentTitle: !c.currentTitle,
+    currentCompany: !c.currentCompany,
+    skills: !c.skills || c.skills.length === 0,
+    education: !c.education || c.education.length === 0,
+    workHistory: !c.workHistory || c.workHistory.length === 0,
+  };
+  // 5 核心字段缺 ≥ 3 个, 或 教育+工作+技能 三项全空 → 触发引导
+  const coreMissing = [m.name, m.totalYears, m.currentTitle, m.currentCompany, m.skills].filter(Boolean).length;
+  const tripleEmpty = m.education && m.workHistory && m.skills;
+  if (coreMissing >= 3 || tripleEmpty) return m;
+  return null;
+}
 
 type Props = {
   value: Candidate | null;
@@ -45,8 +83,17 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   const [parsing, setParsing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [supplementOpen, setSupplementOpen] = useState(false);
+  const [patchName, setPatchName] = useState('');
+  const [patchYears, setPatchYears] = useState('');
+  const [patchTitle, setPatchTitle] = useState('');
+  const [patchCompany, setPatchCompany] = useState('');
+  const [patchSkills, setPatchSkills] = useState('');
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+
+  const missing = detectMissingFields(candidate);
+  const showSupplement = !!error || !!missing;
 
   const runParse = useCallback(async (parseFn: () => Promise<Candidate>) => {
     setError(null);
@@ -99,6 +146,56 @@ export function ResumeUploadModule({ value, onChange }: Props) {
       setError(`文本解析失败: ${msg}`);
     }
   };
+
+  // Allen 2026-08-21: 把用户手动填的字段合入 candidate, 然后触发重新评分
+  const applyPatch = useCallback((patch: SupplementPatch) => {
+    const base: Candidate = candidate ?? {
+      rawText: '',
+      totalYears: 0,
+      education: [],
+      workHistory: [],
+      projects: [],
+      skills: [],
+    };
+    const merged: Candidate = {
+      ...base,
+      name: patch.name?.trim() || base.name,
+      totalYears: patch.totalYears ?? base.totalYears,
+      currentTitle: patch.currentTitle?.trim() || base.currentTitle,
+      currentCompany: patch.currentCompany?.trim() || base.currentCompany,
+      skills: patch.skills && patch.skills.length > 0
+        ? Array.from(new Set([...(base.skills ?? []), ...patch.skills]))
+        : (base.skills ?? []),
+    };
+    onChange(merged);
+    setSupplementOpen(false);
+    setError(null);
+  }, [candidate, onChange]);
+
+  const handleSubmitPatch = () => {
+    const skills = patchSkills
+      .split(/[,,;、\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const yearsNum = parseFloat(patchYears);
+    applyPatch({
+      name: patchName,
+      totalYears: Number.isFinite(yearsNum) && yearsNum > 0 ? yearsNum : undefined,
+      currentTitle: patchTitle,
+      currentCompany: patchCompany,
+      skills: skills.length > 0 ? skills : undefined,
+    });
+    setPatchName('');
+    setPatchYears('');
+    setPatchTitle('');
+    setPatchCompany('');
+    setPatchSkills('');
+  };
+
+  // 解析失败时自动展开补充面板
+  useEffect(() => {
+    if (error) setSupplementOpen(true);
+  }, [error]);
 
   // ===========================================
   // 剪贴板粘贴支持 (Ctrl+V)
@@ -270,6 +367,103 @@ export function ResumeUploadModule({ value, onChange }: Props) {
             </div>
           </details>
         </div>
+
+        {/* Allen 2026-08-21: 解析失败 / 关键字段缺失 → 引导用户手动补充 */}
+        {showSupplement && (
+          <div className="pt-2 border-t border-border">
+            <button
+              type="button"
+              onClick={() => setSupplementOpen((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 py-3 text-left"
+            >
+              <span className="flex items-center gap-2 text-sm font-medium text-accent-gold">
+                <PencilLine className="w-4 h-4" />
+                解析失败 / 字段缺失 · 手动补充候选人信息
+              </span>
+              <ChevronDown
+                className={`w-4 h-4 text-fg-muted transition-transform ${
+                  supplementOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {supplementOpen && (
+              <div className="pb-2 space-y-3">
+                <p className="text-xs text-fg-muted leading-relaxed">
+                  {error
+                    ? '解析未成功, 评分将按基础分 50 计 (不评 0 分)。补全下方核心字段后可立即重新评分。'
+                    : '简历信息较稀疏, 建议补全核心字段以提升评分准确性。'}
+                </p>
+
+                {missing && (
+                  <div className="text-xs text-fg-subtle bg-bg-input/40 border border-border rounded-lg p-2.5 leading-relaxed">
+                    <span className="text-fg-muted">未识别字段：</span>
+                    {missing.name && <Badge color="red" variant="soft" className="mr-1">姓名</Badge>}
+                    {missing.totalYears && <Badge color="red" variant="soft" className="mr-1">工作年限</Badge>}
+                    {missing.currentTitle && <Badge color="red" variant="soft" className="mr-1">当前职位</Badge>}
+                    {missing.currentCompany && <Badge color="red" variant="soft" className="mr-1">当前公司</Badge>}
+                    {missing.education && <Badge color="yellow" variant="soft" className="mr-1">教育经历</Badge>}
+                    {missing.workHistory && <Badge color="yellow" variant="soft" className="mr-1">工作经历</Badge>}
+                    {missing.skills && <Badge color="yellow" variant="soft" className="mr-1">技能</Badge>}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Input
+                    label="姓名"
+                    placeholder="如：张三"
+                    value={patchName}
+                    onChange={(e) => setPatchName(e.target.value)}
+                  />
+                  <Input
+                    label="工作年限 (年)"
+                    type="number"
+                    placeholder="如：5"
+                    min={0}
+                    max={50}
+                    step={0.5}
+                    value={patchYears}
+                    onChange={(e) => setPatchYears(e.target.value)}
+                  />
+                  <Input
+                    label="当前职位"
+                    placeholder="如：高级算法工程师"
+                    value={patchTitle}
+                    onChange={(e) => setPatchTitle(e.target.value)}
+                  />
+                  <Input
+                    label="当前公司"
+                    placeholder="如：字节跳动"
+                    value={patchCompany}
+                    onChange={(e) => setPatchCompany(e.target.value)}
+                  />
+                  <Input
+                    className="md:col-span-2"
+                    label="技能 (逗号或空格分隔)"
+                    placeholder="如：Python, PyTorch, LLM, RAG"
+                    value={patchSkills}
+                    onChange={(e) => setPatchSkills(e.target.value)}
+                    hint="将合并到已识别的技能列表"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    onClick={handleSubmitPatch}
+                    disabled={
+                      !patchName && !patchYears && !patchTitle && !patchCompany && !patchSkills
+                    }
+                  >
+                    应用到候选人 · 重新评分
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Parsed preview */}
         {candidate && (candidate.name || candidate.totalYears > 0 || candidate.education.length > 0) && (

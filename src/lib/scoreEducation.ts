@@ -36,15 +36,17 @@ export function scoreEducation(
   const missed: string[] = [];
 
   if (!candidate.education || candidate.education.length === 0) {
+    // Allen 2026-08-21: 解析失败/无教育经历 → 中性基础分 50, 不评 0/30
+    //   引导用户手动补充最高学历 + 学校后重新评分
     return {
       name: 'education',
       label: '学历评分',
-      score: 30,
+      score: 50,
       weight: 0.2,
-      evidence: ['未识别到教育经历'],
+      evidence: ['未识别到教育经历, 按基础分 50 计'],
       matched: [],
       missed: ['最高学历', '毕业院校'],
-      notes: '简历中未能提取到教育信息，建议人工补充。',
+      notes: '简历中未识别到教育经历, 按基础分 50 计。建议人工补充最高学历 + 毕业院校后重新评分。',
     };
   }
 

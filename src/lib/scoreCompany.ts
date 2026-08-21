@@ -22,15 +22,18 @@ export function scoreCompany(
   const missed: string[] = [];
 
   if (!candidate.workHistory || candidate.workHistory.length === 0) {
+    // Allen 2026-08-21: 解析失败/无工作经历 → 中性基础分 50, 不评 0/30
+    //   - 旧 30 分带负面暗示,实际只是数据缺失
+    //   - 改为 50 (中性基础分), 引导用户手动补充工作经历后重新评分
     return {
       name: 'company',
       label: '公司背景评分',
-      score: 30,
+      score: 50,
       weight: 0.25,
-      evidence: ['未识别到工作经历'],
+      evidence: ['未识别到工作经历, 按基础分 50 计'],
       matched: [],
       missed: ['知名公司背景'],
-      notes: '简历中未能提取到工作信息，无法评估公司背景。',
+      notes: '简历中未识别到工作经历, 按基础分 50 计。建议人工补充最近 1-2 段工作信息后重新评分。',
     };
   }
 
