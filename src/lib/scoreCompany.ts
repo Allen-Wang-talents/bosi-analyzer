@@ -93,13 +93,26 @@ export function scoreCompany(
     }
   }
 
-  let score = baseScore + hopPenalty;
-  score = clamp(score, 0, 100);
+  let score = baseScore;
 
-  // 最高 tier 用于点评 (Tier 1-3 是已识别，4 是兜底)
+  // Allen 2026-08-29: 最高 tier 锚定 (Tier 1/2 不允许被加权平均拉到"一般/偏弱")
+  //   旧 bug: 单段 OpenAI 24 月 → weighted=63.3 → "公司背景一般, 缺乏顶级公司背书"
+  //   修复: bestTier=1 → floor 88, bestTier=2 → 75, bestTier=3 → 65
+  //   顺序: 先 floor (公司质量下限), 再加 penalty (career pattern 风险仍生效)
+  //   aggregate.ts 还有全局 floor 50
   const tiers = Array.from(tierMap.values()).filter((t) => t <= 3);
   const bestTier = tiers.length > 0 ? Math.min(...tiers) : 4;
   const tierLabel = (t: number) => TIER_SCORE[t] ? `Tier ${t}` : '未识别';
+  const bestTierFloor = bestTier === 1 ? 88 : bestTier === 2 ? 75 : bestTier === 3 ? 65 : 0;
+  score = Math.max(score, bestTierFloor);
+  score += hopPenalty;
+
+  // 顶级公司但在职 < 12 月 → 标记, 在 notes 里提示但不强制扣分
+  const bestTierJob = sortedHistory.find((wh) => (tierMap.get(wh.company) ?? 4) === bestTier);
+  const bestTierDurationMonths = bestTierJob?.durationMonths ?? 0;
+  const shortStintAtTop = bestTier <= 2 && bestTierDurationMonths > 0 && bestTierDurationMonths < 12;
+
+  score = clamp(score, 0, 100);
 
   // 短板
   if (bestTier >= 3) {
@@ -107,10 +120,14 @@ export function scoreCompany(
   }
 
   let notes: string;
-  if (score >= 85) {
-    notes = `候选人公司背景突出，最高任职于${tierLabel(bestTier)}，${sortedHistory.length}段经历均位于优质公司。`;
-  } else if (score >= 70) {
-    notes = `候选人公司背景较好，最高任职于${tierLabel(bestTier)}，整体背书足够。`;
+  if (bestTier === 1) {
+    notes = shortStintAtTop
+      ? `候选人任职过顶级公司（${tierLabel(bestTier)}，在职约 ${(bestTierDurationMonths / 12).toFixed(1)} 年），公司背书突出但任职时间较短, 建议人工复核深度。`
+      : `候选人公司背景突出，最高任职于${tierLabel(bestTier)}，顶级公司经历是显著加分项。`;
+  } else if (bestTier === 2) {
+    notes = shortStintAtTop
+      ? `候选人任职过明星公司（${tierLabel(bestTier)}，在职约 ${(bestTierDurationMonths / 12).toFixed(1)} 年），整体背书较好但任职时间偏短。`
+      : `候选人公司背景较好，最高任职于${tierLabel(bestTier)}，整体背书足够。`;
   } else if (score >= 55) {
     notes = `候选人公司背景一般，最佳任职于${tierLabel(bestTier)}，缺乏顶级公司背书。`;
   } else {
