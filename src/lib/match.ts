@@ -4,6 +4,16 @@
 import { normalize, similarity, clamp } from './normalize';
 import type { SchoolTier, CompanyTier } from '@/types';
 
+// Allen 2026-08-29: 实体归一化 — 用于公司/学校名匹配, 比 normalize() 更激进
+//   "Open AI" / "Open.AI" / "OpenAI" → "openai" 全部匹配
+//   "字节跳动（中国）" / "字节跳动" → "字节跳动" 全部匹配
+//   保留中文, 剥离 ASCII 空白 + 常见标点 (. , - _ / \ | · 半全角括号)
+export function normalizeEntity(text: string): string {
+  return normalize(text)
+    .replace(/[\s.,_/\\|·\-()()【】\[\]【】]/g, '')
+    .toLowerCase();
+}
+
 // 在文本中查找关键词命中 (normalized substring match)
 export function findMatches(text: string, keywords: string[]): string[] {
   if (!text || !keywords.length) return [];
@@ -22,23 +32,25 @@ export function hasAny(text: string, keywords: string[]): boolean {
 }
 
 // 给定一组 tier 配置，从文本中查找匹配的实体并返回 (实体 -> tier)
+// Allen 2026-08-29: items 字段名兼容 (companies/schools/items)
 export function buildEntityTierMap(
   text: string,
-  tiers: Array<{ tier: number; items: string[] }>
+  tiers: Array<{ tier: number; items?: string[]; companies?: string[]; schools?: string[] }>
 ): Map<string, number> {
   const map = new Map<string, number>();
   if (!text) return map;
-  const norm = normalize(text);
+  const norm = normalizeEntity(text);
 
-  for (const { tier, items } of tiers) {
+  for (const tierEntry of tiers) {
+    const items = tierEntry.items ?? tierEntry.companies ?? tierEntry.schools ?? [];
     for (const item of items) {
       if (!item) continue;
-      const ni = normalize(item);
+      const ni = normalizeEntity(item);
       if (ni && norm.includes(ni)) {
         // 长匹配优先
         const existing = map.get(item);
-        if (existing === undefined || tier < existing) {
-          map.set(item, tier);
+        if (existing === undefined || tierEntry.tier < existing) {
+          map.set(item, tierEntry.tier);
         }
       }
     }
@@ -47,6 +59,7 @@ export function buildEntityTierMap(
 }
 
 // 在候选人工作经历中查找每段对应公司 tier (匹配最长)
+// Allen 2026-08-29: 使用 normalizeEntity 去空格/标点, 解决"Open AI" 漏匹配"OpenAI" 的 bug
 export function resolveCompanyTiers(
   companyNames: string[],
   tiers: CompanyTier[]
@@ -63,11 +76,12 @@ export function resolveCompanyTiers(
   // 对每个候选人公司，找最长匹配的 tier 表中的公司
   for (const candidateCompany of companyNames) {
     if (!candidateCompany) continue;
-    const normCandidate = normalize(candidateCompany);
+    const normCandidate = normalizeEntity(candidateCompany);
     let bestMatch: { name: string; tier: number; len: number } | null = null;
 
     for (const [entity, tier] of entityMap.entries()) {
-      const normEntity = normalize(entity);
+      const normEntity = normalizeEntity(entity);
+      if (!normEntity) continue;
       if (normCandidate.includes(normEntity)) {
         if (!bestMatch || normEntity.length > bestMatch.len) {
           bestMatch = { name: entity, tier, len: normEntity.length };
@@ -85,6 +99,7 @@ export function resolveCompanyTiers(
 }
 
 // 在候选人学校中查找每个对应 tier
+// Allen 2026-08-29: 同样使用 normalizeEntity 去空格/标点
 export function resolveSchoolTiers(
   schoolNames: string[],
   tiers: SchoolTier[]
@@ -100,7 +115,7 @@ export function resolveSchoolTiers(
 
   for (const candidateSchool of schoolNames) {
     if (!candidateSchool) continue;
-    const normCandidate = normalize(candidateSchool);
+    const normCandidate = normalizeEntity(candidateSchool);
     if (normCandidate.length < 2) {
       result.set(candidateSchool, 9);
       continue;
@@ -110,12 +125,12 @@ export function resolveSchoolTiers(
     let bestPartial: { name: string; tier: number; ratio: number } | null = null; // entity.includes(candidate)
 
     for (const [entity, tier] of entityMap.entries()) {
-      const normEntity = normalize(entity);
+      const normEntity = normalizeEntity(entity);
       if (!normEntity || normEntity.length < 2) continue;
 
       if (normCandidate.includes(normEntity)) {
         // 完整包含: 简历写了全名. 倾向更长(更具体)的 entity, 优先级高于简称
-        if (!bestFull || normEntity.length > normalize(bestFull.name).length) {
+        if (!bestFull || normEntity.length > normalizeEntity(bestFull.name).length) {
           bestFull = { name: entity, tier };
         }
       } else if (normEntity.includes(normCandidate)) {
