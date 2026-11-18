@@ -1,0 +1,43 @@
+# =====================================================
+# Netlify 部署配置 —— 博思AI人才推荐网的国内镜像
+#
+# 为什么要有这一份: *.vercel.app 在中国大陆被墙, Netlify 的 *.netlify.app 能直连。
+# 两边跑的是同一份代码 (业务逻辑在 server/, 只有 req/res 适配层各写一份)。
+# =====================================================
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# 前端调的是 /api/xxx, 这里转成 Netlify 的函数路径
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/jobs"
+  to = "/.netlify/functions/jobs"
+  status = 200
+
+[[redirects]]
+  from = "/api/rank"
+  to = "/.netlify/functions/rank"
+  status = 200
+
+# 单页应用兜底 —— 必须放在上面几条之后
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

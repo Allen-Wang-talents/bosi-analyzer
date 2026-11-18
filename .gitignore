@@ -27,3 +27,8 @@ data/jobs.snapshot.json
 *.njsproj
 *.sln
 *.sw?
+
+# Netlify 本地打包产物
+netlify/functions/*.zip
+netlify/functions/manifest.json
+.netlify/

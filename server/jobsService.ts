@@ -1,0 +1,75 @@
+// =====================================================
+// 岗位池服务 —— Vercel 和 Netlify 两套部署共用这一份
+//
+// 只管「拿数据 + 组响应」, 不碰 req/res。
+// =====================================================
+import type { JobPosition } from '../shared/jobs.ts';
+import { fetchAllJobs } from './feishu.ts';
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cache: { jobs: JobPosition[]; fetchedAt: number } | null = null;
+
+export type JobsPayload = {
+  jobs: JobPosition[];
+  fetchedAt: number;
+  source: 'live' | 'fallback';
+  count: number;
+  degraded: boolean;
+  error?: string;
+};
+
+export async function getJobsPayload(opts: {
+  appId?: string;
+  appSecret?: string;
+  force?: boolean;
+}): Promise<JobsPayload> {
+  const { appId, appSecret, force } = opts;
+
+  if (!force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
+    return {
+      jobs: cache.jobs,
+      fetchedAt: cache.fetchedAt,
+      source: 'live',
+      count: cache.jobs.length,
+      degraded: false,
+    };
+  }
+
+  if (!appId || !appSecret) {
+    return {
+      jobs: [],
+      fetchedAt: Date.now(),
+      source: 'fallback',
+      count: 0,
+      degraded: true,
+      error: '服务端未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，岗位库暂不可用。',
+    };
+  }
+
+  try {
+    const { jobs, failedTables } = await fetchAllJobs(appId, appSecret);
+    cache = { jobs, fetchedAt: Date.now() };
+    return {
+      jobs,
+      fetchedAt: cache.fetchedAt,
+      source: 'live',
+      count: jobs.length,
+      degraded: failedTables.length > 0,
+      ...(failedTables.length > 0
+        ? { error: `以下分表读取失败: ${failedTables.join('、')}` }
+        : {}),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[jobs] 拉取岗位失败:', err);
+    return {
+      jobs: cache?.jobs ?? [],
+      fetchedAt: cache?.fetchedAt ?? Date.now(),
+      source: cache ? 'live' : 'fallback',
+      count: cache?.jobs.length ?? 0,
+      degraded: true,
+      error: message,
+    };
+  }
+}

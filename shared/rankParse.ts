@@ -17,7 +17,7 @@ export type RankItem = {
 };
 
 export function stripThinkingTags(text: string): string {
-  return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim();
+  return text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim();
 }
 
 /**
