@@ -11,22 +11,25 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: 检查首页和健康检查接口
+      - name: 首页
         run: |
-          fail=0
-          for url in \
-            "https://bosi-analyzer.vercel.app/" \
-            "https://bosi-analyzer.vercel.app/api/health" \
-            "https://bosi-analyzer.vercel.app/api/jobs"
-          do
-            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 25 "$url" || echo 000)
-            echo "== $url -> HTTP $code"
-            head -c 200 /tmp/body; echo
-            # 首页和 health 必须 200; /api/jobs 失败也返回 200, 所以额外看 body 里有没有 jobs
-            if [ "$url" != "*/api/jobs" ] && [ "$code" != "200" ]; then fail=1; fi
-            if [ "$url" = "*/api/jobs" ] && ! grep -q '"jobs"' /tmp/body; then
-              echo "!! /api/jobs 没返回岗位数据"
-              fail=1
-            fi
-          done
-          exit $fail
+          code=$(curl -s -o /tmp/home -w '%{http_code}' --max-time 25 https://bosi-analyzer.vercel.app/)
+          echo "首页 -> HTTP $code"
+          grep -o '<title>[^<]*</title>' /tmp/home || echo "(没取到标题)"
+          [ "$code" = "200" ] || { echo "::error::首页打不开"; exit 1; }
+
+      - name: 健康检查接口
+        run: |
+          code=$(curl -s -o /tmp/health -w '%{http_code}' --max-time 25 https://bosi-analyzer.vercel.app/api/health)
+          echo "health -> HTTP $code"; cat /tmp/health; echo
+          [ "$code" = "200" ] || { echo "::error::health 不通"; exit 1; }
+
+      - name: 岗位池接口 (必须是 JSON, 不能被 SPA 兜底换成 HTML)
+        run: |
+          code=$(curl -s -o /tmp/jobs -w '%{http_code}' --max-time 30 https://bosi-analyzer.vercel.app/api/jobs)
+          echo "jobs -> HTTP $code"; head -c 300 /tmp/jobs; echo
+          [ "$code" = "200" ] || { echo "::error::jobs 不通"; exit 1; }
+          head -c 1 /tmp/jobs | grep -q '{' || {
+            echo "::error::/api/jobs 返回的不是 JSON —— vercel.json 的 /(.*) → /index.html 兜底把 API 盖住了"
+            exit 1
+          }
