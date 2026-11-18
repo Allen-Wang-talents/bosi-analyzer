@@ -3,18 +3,25 @@
 // 把 API Key 从前端移到后端环境变量，避免 key 暴露
 // =====================================================
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import {
-  callMiniMax,
-  createRateLimiter,
-  upstreamMessage,
-  UpstreamError,
-  DEFAULT_MODEL,
-} from '../server/minimax.ts';
 
 const MAX_TOKENS_LIMIT = 2000;
 
-// 限流（in-memory，仅同实例有效）
-const checkRateLimit = createRateLimiter(60_000, 30);
+// 服务模块用动态载入 —— 万一文件没进部署包, 也只是报错, 不会整个函数 500
+let minimaxModule: Promise<typeof import('../server/minimax.ts')> | null = null;
+// 限流表必须是模块级的 —— 每次请求新建就等于没有限流
+let rateLimiter: ((ip: string) => { allowed: boolean; remaining: number; resetIn: number }) | null = null;
+
+async function loadMinimax(): Promise<typeof import('../server/minimax.ts')> {
+  if (!minimaxModule) {
+    minimaxModule = import('../server/minimax.ts').catch((err) => {
+      minimaxModule = null;
+      throw err;
+    });
+  }
+  const mod = await minimaxModule;
+  if (!rateLimiter) rateLimiter = mod.createRateLimiter(60_000, 30);
+  return mod;
+}
 
 function setCors(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -34,11 +41,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  let minimax: typeof import('../server/minimax.ts');
+  try {
+    minimax = await loadMinimax();
+  } catch (err) {
+    console.error('[chat] 服务模块不可用:', err);
+    return res.status(500).json({ error: '服务端模块加载失败，请联系管理员。' });
+  }
+
   // 限流
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
     || req.socket.remoteAddress
     || 'unknown';
-  const rl = checkRateLimit(ip);
+  const rl = rateLimiter!(ip);
   res.setHeader('X-RateLimit-Limit', '30');
   res.setHeader('X-RateLimit-Remaining', String(rl.remaining));
   res.setHeader('X-RateLimit-Reset', String(Math.ceil(rl.resetIn / 1000)));
@@ -86,12 +101,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     : 0.5;
 
   try {
-    const result = await callMiniMax({
+    const result = await minimax.callMiniMax({
       apiKey,
       messages,
       maxTokens,
       temperature,
-      model: body.model || DEFAULT_MODEL,
+      model: body.model || minimax.DEFAULT_MODEL,
     });
     return res.status(200).json({
       content: result.content,
@@ -99,9 +114,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       model: result.model,
     });
   } catch (err) {
-    if (err instanceof UpstreamError) {
+    if (err instanceof minimax.UpstreamError) {
       console.error(`[chat] MiniMax 上游错误 ${err.status}:`, err.message);
-      return res.status(err.status).json({ error: upstreamMessage(err.status) });
+      return res.status(err.status).json({ error: minimax.upstreamMessage(err.status) });
     }
     console.error('[chat] 转发失败:', err);
     return res.status(502).json({ error: '无法连接到上游 AI 服务' });

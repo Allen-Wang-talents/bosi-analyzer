@@ -6,10 +6,22 @@
 // 但「深度评鉴」页完全不受影响。
 // =====================================================
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getJobsPayload } from '../server/jobsService.ts';
 
 // 拉飞书最多允许跑 60 秒 —— 默认的 10 秒上限不够 8 张表分页读完
 export const config = { maxDuration: 60 };
+
+// 服务模块用动态载入 —— 万一文件没进部署包, 也只是降级, 不会整个函数 500
+let serviceModule: Promise<typeof import('../server/jobsService.ts')> | null = null;
+
+function loadService(): Promise<typeof import('../server/jobsService.ts')> {
+  if (!serviceModule) {
+    serviceModule = import('../server/jobsService.ts').catch((err) => {
+      serviceModule = null;
+      throw err;
+    });
+  }
+  return serviceModule;
+}
 
 function setCors(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,10 +36,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
   const force = String(req.query?.refresh ?? '') === '1';
-  const payload = await getJobsPayload({
-    appId: process.env.FEISHU_APP_ID,
-    appSecret: process.env.FEISHU_APP_SECRET,
-    force,
-  });
-  return res.status(200).json(payload);
+  try {
+    const { getJobsPayload } = await loadService();
+    const payload = await getJobsPayload({
+      appId: process.env.FEISHU_APP_ID,
+      appSecret: process.env.FEISHU_APP_SECRET,
+      force,
+    });
+    return res.status(200).json(payload);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[jobs] 岗位池服务不可用:', err);
+    return res.status(200).json({
+      jobs: [],
+      fetchedAt: Date.now(),
+      source: 'fallback',
+      count: 0,
+      degraded: true,
+      error: `岗位池服务不可用: ${message}`,
+    });
+  }
 }

@@ -10,10 +10,18 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vercel
+            base: https://bosi-analyzer.vercel.app
+          - name: Netlify
+            base: https://bosi-analyzer.netlify.app
     steps:
       - name: 首页
         run: |
-          code=$(curl -s -o /tmp/home -w '%{http_code}' --max-time 25 https://bosi-analyzer.vercel.app/)
+          code=$(curl -s -o /tmp/home -w '%{http_code}' --max-time 25 "${{ matrix.base }}/")
           echo "首页 -> HTTP $code"
           grep -o '<title>[^<]*</title>' /tmp/home || echo "(没取到标题)"
           [ "$code" = "200" ] || { echo "::error::首页打不开"; exit 1; }
@@ -21,7 +29,7 @@ jobs:
       - name: 首页真的能渲染吗 (无头 Chrome 跑一遍 JS)
         run: |
           google-chrome --headless=new --disable-gpu --no-sandbox --virtual-time-budget=10000 \
-            --dump-dom https://bosi-analyzer.vercel.app/ > /tmp/dom.html 2>/dev/null || true
+            --dump-dom "${{ matrix.base }}/" > /tmp/dom.html 2>/dev/null || true
           echo "DOM 字节数: $(wc -c < /tmp/dom.html)"
           grep -q '岗位推荐' /tmp/dom.html && grep -q '深度评鉴' /tmp/dom.html \
             && echo "渲染 OK (React 已挂载)" \
@@ -29,26 +37,35 @@ jobs:
 
       - name: 健康检查接口
         run: |
-          code=$(curl -s -o /tmp/health -w '%{http_code}' --max-time 25 https://bosi-analyzer.vercel.app/api/health)
+          code=$(curl -s -o /tmp/health -w '%{http_code}' --max-time 25 "${{ matrix.base }}/api/health")
           echo "health -> HTTP $code"; cat /tmp/health; echo
           [ "$code" = "200" ] || { echo "::error::health 不通"; exit 1; }
 
       - name: 岗位池接口 (必须是 JSON, 不能被 SPA 兜底换成 HTML)
         run: |
-          code=$(curl -s -o /tmp/jobs -w '%{http_code}' --max-time 30 https://bosi-analyzer.vercel.app/api/jobs)
+          code=$(curl -s -o /tmp/jobs -w '%{http_code}' --max-time 30 "${{ matrix.base }}/api/jobs")
           echo "jobs -> HTTP $code"; head -c 300 /tmp/jobs; echo
           [ "$code" = "200" ] || { echo "::error::jobs 不通"; exit 1; }
           head -c 1 /tmp/jobs | grep -q '{' || {
-            echo "::error::/api/jobs 返回的不是 JSON —— vercel.json 的 /(.*) → /index.html 兜底把 API 盖住了"
+            echo "::error::/api/jobs 返回的不是 JSON —— SPA 兜底把 API 盖住了"
             exit 1
           }
+
+      - name: 对话接口 (验证 MiniMax 中转 + 模块装载)
+        run: |
+          code=$(curl -s -o /tmp/chat -w '%{http_code}' --max-time 60 \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","content":"回复两个字：正常"}],"max_tokens":50}' \
+            "${{ matrix.base }}/api/chat")
+          echo "chat -> HTTP $code"; head -c 200 /tmp/chat; echo
+          [ "$code" = "200" ] || { echo "::error::chat 不通"; exit 1; }
 
       - name: 精排接口 (发一条假岗位, 验证模块装载 + 上游连通)
         run: |
           code=$(curl -s -o /tmp/rank -w '%{http_code}' --max-time 90 \
             -X POST -H 'Content-Type: application/json' \
             -d '{"candidate":{"title":"算法工程师","company":"测试公司","years":8,"skills":["Python","大模型"]},"jobs":[{"id":"probe-1","title":"大模型算法工程师","client":"测试客户","track":"算法岗","location":"北京","jd":"负责大模型训练与评测","profile":"8年以上, 硕士"}]}' \
-            https://bosi-analyzer.vercel.app/api/rank)
+            "${{ matrix.base }}/api/rank")
           echo "rank -> HTTP $code"; head -c 300 /tmp/rank; echo
           [ "$code" = "200" ] || { echo "::error::rank 不通"; exit 1; }
           head -c 1 /tmp/rank | grep -q '{' || {

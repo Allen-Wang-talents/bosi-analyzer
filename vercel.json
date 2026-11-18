@@ -3,11 +3,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/jobs.ts": {
+    "*": {
       "includeFiles": "{server,shared}/**/*.ts"
-    },
-    "api/rank.ts": {
-      "includeFiles": "shared/**/*.ts"
     }
   },
   "rewrites": [
