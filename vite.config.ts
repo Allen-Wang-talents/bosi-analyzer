@@ -84,8 +84,14 @@ function devJobsApi(env: Record<string, string>): Plugin {
 
         try {
           if (appId && appSecret) {
-            const jobs = await fetchAllJobs(appId, appSecret)
-            send({ jobs, fetchedAt: Date.now(), source: 'live', count: jobs.length, degraded: false })
+            const { jobs, failedTables } = await fetchAllJobs(appId, appSecret)
+            send({
+              jobs,
+              fetchedAt: Date.now(),
+              source: 'live',
+              count: jobs.length,
+              degraded: failedTables.length > 0,
+            })
             return
           }
 

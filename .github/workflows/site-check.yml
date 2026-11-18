@@ -33,3 +33,8 @@ jobs:
             echo "::error::/api/jobs 返回的不是 JSON —— vercel.json 的 /(.*) → /index.html 兜底把 API 盖住了"
             exit 1
           }
+
+      - name: 诊断端点 (临时)
+        run: |
+          code=$(curl -s -o /tmp/diag -w '%{http_code}' --max-time 60 https://bosi-analyzer.vercel.app/api/diag)
+          echo "diag -> HTTP $code"; cat /tmp/diag; echo
