@@ -4,13 +4,13 @@
   "outputDirectory": "dist",
   "functions": {
     "api/jobs.ts": {
-      "includeFiles": ["server/**/*.ts", "shared/**/*.ts"]
+      "includeFiles": "{server,shared}/**/*.ts"
     },
     "api/rank.ts": {
-      "includeFiles": ["shared/**/*.ts"]
+      "includeFiles": "shared/**/*.ts"
     },
     "api/diag.ts": {
-      "includeFiles": ["server/**/*.ts", "shared/**/*.ts"]
+      "includeFiles": "{server,shared}/**/*.ts"
     }
   },
   "rewrites": [
