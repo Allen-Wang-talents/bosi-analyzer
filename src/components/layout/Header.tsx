@@ -1,20 +1,28 @@
 // =====================================================
-// Header - Logo + 历史/设置入口
+// Header - Logo + 页面切换 + 历史/设置入口
 // =====================================================
 import { useState } from 'react';
-import { History, Settings as SettingsIcon, Sparkles } from 'lucide-react';
-import { Button, Badge } from '@/components/ui/Card';
+import { History, Settings as SettingsIcon } from 'lucide-react';
+import { Button, cn } from '@/components/ui/Card';
 import { HistoryDrawer } from '@/components/ui/HistoryDrawer';
 import { SettingsModal } from '@/components/ui/SettingsModal';
+import { useJobStore, type AppView } from '@/store/useJobStore';
 import type { ApiKeyStatus } from '@/types';
 
 type Props = {
   apiKeyStatus: ApiKeyStatus;
 };
 
+const TABS: Array<{ key: AppView; label: string }> = [
+  { key: 'match', label: '岗位推荐' },
+  { key: 'review', label: '深度评鉴' },
+];
+
 export function Header({ apiKeyStatus }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const view = useJobStore((s) => s.view);
+  const setView = useJobStore((s) => s.setView);
 
   return (
     <>
@@ -31,11 +39,29 @@ export function Header({ apiKeyStatus }: Props) {
             </div>
             <div className="leading-tight">
               <h1 className="text-xl font-bold font-serif text-gold-gradient">
-                博思AI人才评荐网
+                博思AI人才推荐网
               </h1>
               <p className="text-[11px] text-fg-muted tracking-[0.2em] uppercase font-medium">BOSS AI TALENT</p>
             </div>
           </div>
+
+          {/* 页面切换 */}
+          <nav className="hidden md:flex items-center gap-1 p-1 rounded-xl bg-bg-card border border-border">
+            {TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setView(tab.key)}
+                className={cn(
+                  'px-4 h-8 text-xs font-medium rounded-lg transition-all duration-150',
+                  view === tab.key
+                    ? 'bg-accent-gold/15 text-accent-gold'
+                    : 'text-fg-muted hover:text-fg'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
@@ -47,6 +73,26 @@ export function Header({ apiKeyStatus }: Props) {
               <ApiKeyDot status={apiKeyStatus} />
             </Button>
           </div>
+        </div>
+
+        {/* 小屏时把切换按钮挪到第二行 */}
+        <div className="md:hidden max-w-[1600px] mx-auto px-6 pb-2">
+          <nav className="flex items-center gap-1 p-1 rounded-xl bg-bg-card border border-border w-fit">
+            {TABS.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setView(tab.key)}
+                className={cn(
+                  'px-4 h-8 text-xs font-medium rounded-lg transition-all duration-150',
+                  view === tab.key
+                    ? 'bg-accent-gold/15 text-accent-gold'
+                    : 'text-fg-muted hover:text-fg'
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 

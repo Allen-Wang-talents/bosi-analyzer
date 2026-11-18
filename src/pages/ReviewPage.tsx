@@ -1,5 +1,7 @@
 // =====================================================
-// HomePage - 组合 5 个模块到单页布局
+// ReviewPage —— 深度评鉴 (原来的单页流程, 原样保留)
+//
+// 这一页一个字都没改, 只是从「首页」挪成了「二级页」。
 // =====================================================
 import { useEffect } from 'react';
 import { CompanyOverviewModule } from '@/components/modules/CompanyOverviewModule';
@@ -9,7 +11,7 @@ import { ResumeUploadModule } from '@/components/modules/ResumeUploadModule';
 import { MatchAnalysisModule } from '@/components/modules/MatchAnalysisModule';
 import { useAnalysisStore } from '@/store/useAnalysisStore';
 
-export function HomePage() {
+export function ReviewPage() {
   const company = useAnalysisStore((s) => s.company);
   const jd = useAnalysisStore((s) => s.jd);
   const profile = useAnalysisStore((s) => s.profile);

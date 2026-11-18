@@ -13,6 +13,10 @@ dist-ssr
 *.local
 .npm-cache
 
+# 岗位池快照 —— 含客户真名/薪资/点位等保密数据, 不进仓库
+# 也不能放 public/ —— vite 会把它拷进 dist/ 跟着部署上线, 等于公开了客户名单
+data/jobs.snapshot.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

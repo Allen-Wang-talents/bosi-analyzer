@@ -48,6 +48,9 @@ export const PRODUCT_TO_COMPANY_MAP: Record<string, string> = {
   // ===== 京东系 =====
   '京东': '京东', '京东商城': '京东', '京东到家': '京东', '京东金融': '京东',
   '京东物流': '京东', '京东健康': '京东', '京东云': '京东',
+  // 京东方 (BOE, 面板厂) 必须排在"京东"前面 —— 子串匹配是长名优先,
+  // 没有这条的话"京东方"里的"京东"会先命中, 雇主就从面板厂变成电商。
+  '京东方': '京东方', '京东方科技集团': '京东方',
   // ===== 百度系 =====
   '百度': '百度', '百度地图': '百度', '百度网盘': '百度', '百度文库': '百度',
   '百度输入法': '百度', '百度搜索': '百度', '百度智能云': '百度', 'Apollo': '百度',
@@ -161,15 +164,38 @@ function looksObviouslyNotCompany(name: string): boolean {
   // 含明显是叙述的助词 (避免 "字节跳动的抖音电商后端" 漏过)
   if (/(?:的|了|是|在|和|与|或)$/.test(name)) return true;
   // 含英文标点空格紧邻 (如 "ABC, Inc." / "X.Y.Z" 这种多个点)
-  if (/[A-Za-z]\.[A-Za-z]/.test(name)) return true;
+  // 只在出现两次以上时 reject —— "Converge.AI" 是正常公司名
+  if (/(?:[A-Za-z]\.[A-Za-z]).*(?:[A-Za-z]\.[A-Za-z])/.test(name)) return true;
   return false;
+}
+
+// 工商主体全称 —— 以公司/集团等注册后缀结尾。
+//
+// Allen 2026-10-29: 黑名单里的"技术""数据""产品""服务""平台"这些词在
+// 工商全称里是常态 —— "华为技术有限公司""北京西云数据科技有限公司"
+// "上海寻星信息技术有限公司"。原来按黑名单 reject, 导致整条工作经历丢失
+// (287 份库里 HR/产品/运营 目录大量命中)。
+// 注册全称是公司名最强的信号, 优先于噪声词黑名单。
+//
+// 只看末尾 8 个字: "联想（北京）有限公司北京" 这种"公司名 + 城市"的排版
+// 也能命中, 而"公司名称： 易宝支付"这种标签行不会(公司二字离末尾太远)。
+const LEGAL_ENTITY_SUFFIX_RE =
+  /(?:有限责任公司|股份有限公司|有限公司|集团公司|集团|公司|控股|工作室|事务所|研究院|研究所|出版社|医院|银行)/;
+
+export function looksLikeLegalEntity(name: string): boolean {
+  return LEGAL_ENTITY_SUFFIX_RE.test(name.trim().slice(-8));
 }
 
 // 判断是否为产品/项目名（非公司名）
 export function isProductName(name: string): boolean {
   if (!name) return false;
+  // 工商主体全称 → 一定是公司名, 不按产品/部门黑名单 reject
+  if (looksLikeLegalEntity(name)) return false;
   // 命中反向映射 → 是产品名（但可解析）
-  if (PRODUCT_TO_COMPANY_MAP[name]) return true;
+  // 自己映射到自己的除外 —— "京东方"/"京东"/"美团"这类公司名本身就是键,
+  // 它们是公司, 不是产品。
+  const mapped = PRODUCT_TO_COMPANY_MAP[name];
+  if (mapped && mapped !== name) return true;
   // 含产品/系统词 → 是产品名
   for (const kw of PRODUCT_NOISE_KEYWORDS) {
     if (name.includes(kw)) return true;

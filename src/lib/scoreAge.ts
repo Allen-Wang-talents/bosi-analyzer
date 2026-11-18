@@ -3,6 +3,7 @@
 // =====================================================
 import type { Candidate, DimensionResult } from '@/types';
 import { clamp } from './normalize';
+import { inferBirthYearFromEducation, inferBirthYearFromYears } from './ageUtil';
 
 // 年龄 → 分数查表 (按 Allen 2026-06 偏好设定)
 const AGE_SCORE_TABLE: Array<{ maxAge: number; score: number; cohort: string }> = [
@@ -37,25 +38,7 @@ function ageToScore(age: number): { score: number; cohort: string } {
   return { score: 8, cohort: '70 后及更早' };
 }
 
-// 从 totalYears 反推出生年 (假设 22 岁开始第一份工作/实习)
-function inferBirthYearFromYears(totalYears: number, now = new Date()): number | null {
-  if (!totalYears || totalYears < 0) return null;
-  const careerStartYear = now.getFullYear() - totalYears;
-  return careerStartYear - 22;
-}
-
-// 从最高学历入学年反推 (本科 18 岁入学，硕士 22，博士 26)
-function inferBirthYearFromEducation(edu: Candidate['education']): number | null {
-  if (!edu || edu.length === 0) return null;
-  // 找最高学历 (博士 > 硕士 > 本科)
-  const order: Record<string, number> = { '博士': 3, '硕士': 2, '本科': 1, '专科': 0, '其他': -1 };
-  const sorted = [...edu].sort((a, b) => (order[b.degree] ?? -1) - (order[a.degree] ?? -1));
-  const top = sorted[0];
-  if (!top?.startYear) return null;
-
-  const enrollAge = top.degree === '博士' ? 24 : top.degree === '硕士' ? 22 : 18;
-  return top.startYear - enrollAge;
-}
+// 从 totalYears 反推出生年 / 从最高学历入学年反推 —— 见 ageUtil.ts
 
 export function scoreAge(candidate: Candidate): DimensionResult {
   const evidence: string[] = [];

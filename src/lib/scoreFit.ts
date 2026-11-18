@@ -2,9 +2,9 @@
 // 履历匹配程度评分
 // =====================================================
 import type { Candidate, JD, DimensionResult } from '@/types';
-import { findMatches } from './match';
 import { clamp, intersection } from './normalize';
 import { getSparseCount } from './candidateValid';
+import { titleLevelMatch } from './titleLevel';
 
 export function scoreFit(
   candidate: Candidate,
@@ -125,41 +125,4 @@ export function scoreFit(
     missed,
     notes,
   };
-}
-
-// 职级匹配: 0-1 系数
-function titleLevelMatch(candidateTitle: string, jdTitle: string, jdLevel?: string): number {
-  if (!candidateTitle || !jdTitle) return 0.7; // 信息不足默认中性
-  const c = candidateTitle.toLowerCase();
-  const j = jdTitle.toLowerCase();
-
-  // 职级层级映射 (高 -> 低)
-  const levelMap: Array<[string, number]> = [
-    ['cto', 7], ['ceo', 7], ['vp', 7], ['副总裁', 7],
-    ['总监', 6], ['director', 6],
-    ['架构师', 5], ['architect', 5], ['tech lead', 5], ['技术负责人', 5],
-    ['资深', 4], ['senior', 4], ['高级', 4], ['staff', 4],
-    ['leader', 4], ['主管', 4],
-    ['中级', 3], ['intermediate', 3],
-    ['初级', 2], ['junior', 2],
-    ['助理', 1], ['intern', 1], ['实习', 1],
-  ];
-
-  function getLevel(title: string): number {
-    const tl = title.toLowerCase();
-    for (const [kw, lvl] of levelMap) {
-      if (tl.includes(kw.toLowerCase())) return lvl;
-    }
-    return 3; // 未知默认中级
-  }
-
-  const cLevel = getLevel(candidateTitle);
-  const jLevel = jdLevel ? getLevel(jdLevel) : getLevel(jdTitle);
-  const diff = Math.abs(cLevel - jLevel);
-
-  if (diff === 0) return 1.0;
-  if (diff === 1) return 0.85;
-  if (diff === 2) return 0.65;
-  if (diff === 3) return 0.45;
-  return 0.25;
 }

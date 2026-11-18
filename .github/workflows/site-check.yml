@@ -1,0 +1,32 @@
+name: 站点可用性检查
+
+# 从 GitHub 的 runner 上访问线上站点 —— 有些公司网络解不开 *.vercel.app,
+# 在本机测不出来, 这里测得到。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查首页和健康检查接口
+        run: |
+          fail=0
+          for url in \
+            "https://bosi-analyzer.vercel.app/" \
+            "https://bosi-analyzer.vercel.app/api/health" \
+            "https://bosi-analyzer.vercel.app/api/jobs"
+          do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 25 "$url" || echo 000)
+            echo "== $url -> HTTP $code"
+            head -c 200 /tmp/body; echo
+            # 首页和 health 必须 200; /api/jobs 失败也返回 200, 所以额外看 body 里有没有 jobs
+            if [ "$url" != "*/api/jobs" ] && [ "$code" != "200" ]; then fail=1; fi
+            if [ "$url" = "*/api/jobs" ] && ! grep -q '"jobs"' /tmp/body; then
+              echo "!! /api/jobs 没返回岗位数据"
+              fail=1
+            fi
+          done
+          exit $fail

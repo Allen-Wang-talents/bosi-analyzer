@@ -7,7 +7,7 @@ import { serializeForLLM } from './formatReport';
 import { resolveCompanyName } from '@/data/productCompanyMap';
 import { extractTotalYears, parseResumeText } from './parseResume';
 
-const SYSTEM_PROMPT = `你是博思AI人才评荐网的 AI 助手，服务于资深猎头顾问。你将收到一份结构化的候选人匹配分析数据，包括公司信息、岗位 JD、岗位画像、候选人简历解析、以及 4 个维度的评分与依据。
+const SYSTEM_PROMPT = `你是博思AI人才推荐网的 AI 助手，服务于资深猎头顾问。你将收到一份结构化的候选人匹配分析数据，包括公司信息、岗位 JD、岗位画像、候选人简历解析、以及 4 个维度的评分与依据。
 
 请基于这些数据回答顾问的问题。回答要求：
 1. 使用中文，专业猎头口吻，简洁有力
@@ -20,7 +20,7 @@ const SYSTEM_PROMPT = `你是博思AI人才评荐网的 AI 助手，服务于资
 // 简历解析 prompt - 唯一解析入口
 // 设计: LLM 一次性从简历原文提取完整 Candidate JSON，覆盖所有字段
 // 铁律: 严禁编造简历中不存在的事实；不确定就留空
-const RESUME_PARSE_SYSTEM_PROMPT = `你是博思AI人才评荐网的资深猎头顾问助理，专精从候选人简历文本中精准提取结构化信息，服务资深猎头做人才评估。
+const RESUME_PARSE_SYSTEM_PROMPT = `你是博思AI人才推荐网的资深猎头顾问助理，专精从候选人简历文本中精准提取结构化信息，服务资深猎头做人才评估。
 
 你的输入是一份简历的【原始文本】（可能含中英文混排、多种排版格式）。
 你的任务是从中提取一份完整、干净的 JSON 对象，供猎头顾问直接用于匹配评分。
@@ -145,7 +145,7 @@ const RESUME_PARSE_SYSTEM_PROMPT = `你是博思AI人才评荐网的资深猎头
 
 // 摘要润色专用 prompt - 对前端生成的结构化骨架做二次润色
 // 目标: 保留所有事实证据不变，提升可读性与顾问交付质量
-const POLISH_SYSTEM_PROMPT = `你是博思AI人才评荐网的资深猎头顾问助理，专精候选人履历匹配度分析润色。
+const POLISH_SYSTEM_PROMPT = `你是博思AI人才推荐网的资深猎头顾问助理，专精候选人履历匹配度分析润色。
 
 你的输入是一份【结构化骨架】，由本地规则引擎基于 JD 必须/加分技能、岗位画像一票否决项与加分项、候选人项目经验与技能点命中明细客观生成。
 你的任务是对骨架做【二次润色】，输出最终交付给猎头顾问的"履历匹配度分析"。
