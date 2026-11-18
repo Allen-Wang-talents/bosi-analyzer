@@ -13,12 +13,29 @@
 //     发了模型会顺手按薪资排, 顾问没法解释
 // =====================================================
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { parseRankItems, type RankItem } from '../shared/rankParse.ts';
+import type { RankItem } from '../shared/rankParse.ts';
+
+// 解析模块用动态载入 —— 静态 import 在文件没被打进部署包时会直接让整个函数崩掉
+// (Vercel 返回 500 FUNCTION_INVOCATION_FAILED), 动态载入可以把加载失败变成可降级的错误
+let rankParseModule: Promise<typeof import('../shared/rankParse.ts')> | null = null;
+
+function loadRankParse(): Promise<typeof import('../shared/rankParse.ts')> {
+  if (!rankParseModule) {
+    rankParseModule = import('../shared/rankParse.ts').catch((err) => {
+      rankParseModule = null;
+      throw err;
+    });
+  }
+  return rankParseModule;
+}
 
 const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
 const DEFAULT_MODEL = 'MiniMax-M3';
 const MAX_TOKENS = 8000;
 const BATCH_SIZE = 10;
+
+// 精排要跑大模型 + 可能拆两轮, 10 秒的默认上限不够
+export const config = { maxDuration: 60 };
 
 // 限流比 /api/chat 严 —— 精排是重活
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -151,6 +168,7 @@ async function callMiniMax(
   };
   const choice = data?.choices?.[0];
   const content = choice?.message?.content ?? '';
+  const { parseRankItems } = await loadRankParse();
   return {
     items: parseRankItems(content),
     finishReason: choice?.finish_reason ?? null,
