@@ -8,9 +8,6 @@
     },
     "api/rank.ts": {
       "includeFiles": "shared/**/*.ts"
-    },
-    "api/diag.ts": {
-      "includeFiles": "{server,shared}/**/*.ts"
     }
   },
   "rewrites": [

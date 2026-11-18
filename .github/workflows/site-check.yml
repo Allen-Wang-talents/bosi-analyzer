@@ -34,7 +34,15 @@ jobs:
             exit 1
           }
 
-      - name: 诊断端点 (临时)
+      - name: 精排接口 (发一条假岗位, 验证模块装载 + 上游连通)
         run: |
-          code=$(curl -s -o /tmp/diag -w '%{http_code}' --max-time 60 https://bosi-analyzer.vercel.app/api/diag)
-          echo "diag -> HTTP $code"; cat /tmp/diag; echo
+          code=$(curl -s -o /tmp/rank -w '%{http_code}' --max-time 90 \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"candidate":{"title":"算法工程师","company":"测试公司","years":8,"skills":["Python","大模型"]},"jobs":[{"id":"probe-1","title":"大模型算法工程师","client":"测试客户","track":"算法岗","location":"北京","jd":"负责大模型训练与评测","profile":"8年以上, 硕士"}]}' \
+            https://bosi-analyzer.vercel.app/api/rank)
+          echo "rank -> HTTP $code"; head -c 300 /tmp/rank; echo
+          [ "$code" = "200" ] || { echo "::error::rank 不通"; exit 1; }
+          head -c 1 /tmp/rank | grep -q '{' || {
+            echo "::error::/api/rank 返回的不是 JSON"
+            exit 1
+          }
