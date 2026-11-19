@@ -24,8 +24,8 @@ import {
 } from '../shared/jobs.ts';
 
 const AUTH_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal';
-const APP_AUTH_URL = 'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal';
-const USER_REFRESH_URL = 'https://open.feishu.cn/open-apis/authen/v1/oidc/refresh_access_token';
+// 刷新用户令牌走 accounts 域的 oauth 端点, 且必须带 client_id/client_secret
+const USER_REFRESH_URL = 'https://accounts.feishu.cn/oauth/v3/token';
 const BITABLE_URL = 'https://open.feishu.cn/open-apis/bitable/v1/apps';
 const BASE_V3_URL = 'https://open.feishu.cn/open-apis/base/v3/bases';
 const PAGE_SIZE = 500;
@@ -85,22 +85,17 @@ async function getTenantToken(appId: string, appSecret: string): Promise<string>
   return cachedToken.token;
 }
 
-/** app_access_token —— 换用户刷新令牌时当身份证明用 */
-async function getAppAccessToken(appId: string, appSecret: string): Promise<string> {
-  const res = await fetch(APP_AUTH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
-  });
-  const data = (await res.json()) as { code?: number; msg?: string; app_access_token?: string };
-  if (data.code !== 0 || !data.app_access_token) {
-    throw new FeishuError(
-      `获取 app_access_token 失败: ${data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
-      data.code ?? -1,
-    );
+
+/** 从 JWT 里读过期时间 —— 只用来判断令牌还能用多久, 不做签名校验 */
+function jwtExpiry(token: string): number | null {
+  const part = token.split('.')[1];
+  if (!part) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(part, 'base64url').toString('utf-8')) as { exp?: number };
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch {
+    return null;
   }
-  return data.app_access_token;
 }
 
 /**
@@ -112,46 +107,59 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
   if (cachedUser && now < cachedUser.expiresAt) return cachedUser.token;
 
   if (opts.userAccessToken) {
-    // 没给刷新令牌就只能用这一个, 2 小时后过期 —— 过期后再靠下面的刷新逻辑兜底
-    cachedUser = { token: opts.userAccessToken, expiresAt: now + 90 * 60 * 1000 };
+    // 没给刷新令牌就只能用这一个, 过期后再靠下面的刷新逻辑兜底
+    const exp = jwtExpiry(opts.userAccessToken);
+    cachedUser = {
+      token: opts.userAccessToken,
+      expiresAt: exp ?? now + 90 * 60 * 1000,
+      refreshToken: cachedUser?.refreshToken,
+    };
     return cachedUser.token;
   }
 
   const { appId, appSecret } = opts;
-  const refreshToken = opts.userRefreshToken ?? cachedUser?.refreshToken;
+  const refreshToken = cachedUser?.refreshToken ?? opts.userRefreshToken;
   if (!refreshToken) throw new FeishuError('没有可用的飞书用户令牌', -1);
   if (!appId || !appSecret) {
     throw new FeishuError('刷新用户令牌需要 FEISHU_APP_ID / FEISHU_APP_SECRET', -1);
   }
 
-  const appToken = await getAppAccessToken(appId, appSecret);
+  // 刷新端点在 accounts 域, 用 client_id/client_secret 换 —— open-apis 域的
+  // authen/refresh 系列对这个刷新令牌一律报 "refresh token not found"。
   const res = await fetch(USER_REFRESH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       grant_type: 'refresh_token',
-      app_access_token: appToken,
+      client_id: appId,
+      client_secret: appSecret,
       refresh_token: refreshToken,
     }),
     signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
   });
   const data = (await res.json()) as {
     code?: number;
+    error?: string;
+    error_description?: string;
     message?: string;
     msg?: string;
-    data?: { access_token?: string; expires_in?: number; refresh_token?: string };
+    access_token?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    refresh_token_expires_in?: number;
   };
-  const token = data.data?.access_token;
+  const token = data.access_token;
   if (data.code !== 0 || !token) {
     throw new FeishuError(
-      `刷新用户令牌失败: ${data.message ?? data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
+      `刷新用户令牌失败: ${data.error_description ?? data.message ?? data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
       data.code ?? -1,
     );
   }
   cachedUser = {
     token,
-    expiresAt: now + Math.max(60, (data.data?.expires_in ?? 7200) - 300) * 1000,
-    refreshToken: data.data?.refresh_token ?? refreshToken,
+    expiresAt: now + Math.max(60, (data.expires_in ?? 7200) - 300) * 1000,
+    // 飞书的刷新令牌是一次性的 —— 用一次就换新的, 旧的立即作废
+    refreshToken: data.refresh_token ?? refreshToken,
   };
   return token;
 }
