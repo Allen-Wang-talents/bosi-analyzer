@@ -81,10 +81,17 @@ function devJobsApi(env: Record<string, string>): Plugin {
 
         const appId = env.FEISHU_APP_ID
         const appSecret = env.FEISHU_APP_SECRET
+        const userAccessToken = env.FEISHU_USER_ACCESS_TOKEN
+        const userRefreshToken = env.FEISHU_USER_REFRESH_TOKEN
 
         try {
-          if (appId && appSecret) {
-            const { jobs, failedTables } = await fetchAllJobs(appId, appSecret)
+          if ((appId && appSecret) || userAccessToken || userRefreshToken) {
+            const { jobs, failedTables } = await fetchAllJobs({
+              appId,
+              appSecret,
+              userAccessToken,
+              userRefreshToken,
+            })
             send({
               jobs,
               fetchedAt: Date.now(),

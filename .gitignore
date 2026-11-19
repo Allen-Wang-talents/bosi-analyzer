@@ -32,3 +32,7 @@ data/jobs.snapshot.json
 netlify/functions/*.zip
 netlify/functions/manifest.json
 .netlify/
+
+# lark-cli 导出的岗位数据(含客户真名/薪资/点位), 不进仓库
+*.ndjson
+*.manifest.json

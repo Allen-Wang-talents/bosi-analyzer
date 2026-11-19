@@ -22,9 +22,11 @@ export type JobsPayload = {
 export async function getJobsPayload(opts: {
   appId?: string;
   appSecret?: string;
+  userAccessToken?: string;
+  userRefreshToken?: string;
   force?: boolean;
 }): Promise<JobsPayload> {
-  const { appId, appSecret, force } = opts;
+  const { appId, appSecret, userAccessToken, userRefreshToken, force } = opts;
 
   if (!force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
     return {
@@ -36,19 +38,25 @@ export async function getJobsPayload(opts: {
     };
   }
 
-  if (!appId || !appSecret) {
+  if (!userAccessToken && !userRefreshToken && (!appId || !appSecret)) {
     return {
       jobs: [],
       fetchedAt: Date.now(),
       source: 'fallback',
       count: 0,
       degraded: true,
-      error: '服务端未配置 FEISHU_APP_ID / FEISHU_APP_SECRET，岗位库暂不可用。',
+      error:
+        '服务端未配置飞书凭证（FEISHU_APP_ID / FEISHU_APP_SECRET 或 FEISHU_USER_ACCESS_TOKEN），岗位库暂不可用。',
     };
   }
 
   try {
-    const { jobs, failedTables } = await fetchAllJobs(appId, appSecret);
+    const { jobs, failedTables } = await fetchAllJobs({
+      appId,
+      appSecret,
+      userAccessToken,
+      userRefreshToken,
+    });
     cache = { jobs, fetchedAt: Date.now() };
     return {
       jobs,

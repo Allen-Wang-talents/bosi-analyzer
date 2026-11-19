@@ -1,17 +1,22 @@
 // =====================================================
-// 飞书多维表格读取 —— 用应用凭证 (tenant_access_token) 拉岗位池
+// 飞书多维表格读取 —— 两条通道, 谁能用用谁
 //
-// 依赖环境变量:
-//   FEISHU_APP_ID      应用 App ID
-//   FEISHU_APP_SECRET  应用 App Secret
+// 通道 A (机器人身份, 首选)
+//   tenant_access_token + bitable/v1 records/search
+//   需要应用身份权限 bitable:app:readonly, 且应用是该多维表格的协作者
 //
-// 前置条件 (缺一不可):
-//   1. 应用已申请并发布 base:record:read (或 bitable:app:readonly) 权限
-//   2. 应用已被加为「北京AI岗位汇总」多维表格的只读协作者
+// 通道 B (用户身份, 兜底)
+//   user_access_token + base/v3 records list
+//   权限跟着登录用户走, 不需要把应用加成协作者;
+//   但 user_access_token 只有 2 小时, 靠 refresh_token 续期
+//
+// 环境变量:
+//   FEISHU_APP_ID / FEISHU_APP_SECRET          两种通道都用得上(换 token 用)
+//   FEISHU_USER_ACCESS_TOKEN                   用户令牌(可选, 2 小时有效)
+//   FEISHU_USER_REFRESH_TOKEN                  用户刷新令牌(可选, 30 天可续)
 // =====================================================
 import {
   FEISHU_BASE_APP_TOKEN,
-  FEISHU_FIELD_NAMES,
   FEISHU_TABLES,
   TRACK_LABEL,
   mapRecord,
@@ -19,16 +24,20 @@ import {
 } from '../shared/jobs.ts';
 
 const AUTH_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal';
+const APP_AUTH_URL = 'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal';
+const USER_REFRESH_URL = 'https://open.feishu.cn/open-apis/authen/v1/oidc/refresh_access_token';
 const BITABLE_URL = 'https://open.feishu.cn/open-apis/bitable/v1/apps';
+const BASE_V3_URL = 'https://open.feishu.cn/open-apis/base/v3/bases';
 const PAGE_SIZE = 500;
 
 // 单次请求超时 —— 飞书从境外节点偶尔会卡住, 不设上限的话函数会撞上
 // Vercel 的执行时长上限, 变成 FUNCTION_INVOCATION_FAILED (500), 连降级提示都出不来。
 const AUTH_TIMEOUT_MS = 5_000;
-const RECORD_TIMEOUT_MS = 6_000;
+const RECORD_TIMEOUT_MS = 8_000;
 
 // token 缓存: 过期前 5 分钟失效
 let cachedToken: { token: string; expiresAt: number } | null = null;
+let cachedUser: { token: string; expiresAt: number; refreshToken?: string } | null = null;
 
 export class FeishuError extends Error {
   code: number;
@@ -38,6 +47,13 @@ export class FeishuError extends Error {
     this.code = code;
   }
 }
+
+export type FeishuOpts = {
+  appId?: string;
+  appSecret?: string;
+  userAccessToken?: string;
+  userRefreshToken?: string;
+};
 
 async function getTenantToken(appId: string, appSecret: string): Promise<string> {
   const now = Date.now();
@@ -69,12 +85,81 @@ async function getTenantToken(appId: string, appSecret: string): Promise<string>
   return cachedToken.token;
 }
 
+/** app_access_token —— 换用户刷新令牌时当身份证明用 */
+async function getAppAccessToken(appId: string, appSecret: string): Promise<string> {
+  const res = await fetch(APP_AUTH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+  });
+  const data = (await res.json()) as { code?: number; msg?: string; app_access_token?: string };
+  if (data.code !== 0 || !data.app_access_token) {
+    throw new FeishuError(
+      `获取 app_access_token 失败: ${data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
+      data.code ?? -1,
+    );
+  }
+  return data.app_access_token;
+}
+
+/**
+ * 拿一个能用的用户令牌。
+ * 优先用缓存 —— 其次用环境变量里的 —— 最后拿刷新令牌换新的。
+ */
+async function getUserToken(opts: FeishuOpts): Promise<string> {
+  const now = Date.now();
+  if (cachedUser && now < cachedUser.expiresAt) return cachedUser.token;
+
+  if (opts.userAccessToken) {
+    // 没给刷新令牌就只能用这一个, 2 小时后过期 —— 过期后再靠下面的刷新逻辑兜底
+    cachedUser = { token: opts.userAccessToken, expiresAt: now + 90 * 60 * 1000 };
+    return cachedUser.token;
+  }
+
+  const { appId, appSecret } = opts;
+  const refreshToken = opts.userRefreshToken ?? cachedUser?.refreshToken;
+  if (!refreshToken) throw new FeishuError('没有可用的飞书用户令牌', -1);
+  if (!appId || !appSecret) {
+    throw new FeishuError('刷新用户令牌需要 FEISHU_APP_ID / FEISHU_APP_SECRET', -1);
+  }
+
+  const appToken = await getAppAccessToken(appId, appSecret);
+  const res = await fetch(USER_REFRESH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'refresh_token',
+      app_access_token: appToken,
+      refresh_token: refreshToken,
+    }),
+    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+  });
+  const data = (await res.json()) as {
+    code?: number;
+    message?: string;
+    msg?: string;
+    data?: { access_token?: string; expires_in?: number; refresh_token?: string };
+  };
+  const token = data.data?.access_token;
+  if (data.code !== 0 || !token) {
+    throw new FeishuError(
+      `刷新用户令牌失败: ${data.message ?? data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
+      data.code ?? -1,
+    );
+  }
+  cachedUser = {
+    token,
+    expiresAt: now + Math.max(60, (data.data?.expires_in ?? 7200) - 300) * 1000,
+    refreshToken: data.data?.refresh_token ?? refreshToken,
+  };
+  return token;
+}
+
 type RawItem = Record<string, unknown>;
 
-async function readTable(
-  token: string,
-  tableId: string,
-): Promise<RawItem[]> {
+/** 通道 A: bitable v1, 一次一页, 用 page_token 翻页 */
+async function readTableBitable(token: string, tableId: string): Promise<RawItem[]> {
   const items: RawItem[] = [];
   let pageToken: string | undefined;
 
@@ -87,7 +172,6 @@ async function readTable(
       },
       body: JSON.stringify({
         page_size: PAGE_SIZE,
-        field_names: [...FEISHU_FIELD_NAMES],
         ...(pageToken ? { page_token: pageToken } : {}),
       }),
       signal: AbortSignal.timeout(RECORD_TIMEOUT_MS),
@@ -110,26 +194,75 @@ async function readTable(
   return items;
 }
 
+/** 通道 B: base v3, 返回的是矩阵 —— 列名在 fields, 每行按列顺序对齐 */
+async function readTableBaseV3(token: string, tableId: string): Promise<RawItem[]> {
+  const items: RawItem[] = [];
+  let offset = 0;
+
+  for (;;) {
+    const res = await fetch(
+      `${BASE_V3_URL}/${FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records?limit=${PAGE_SIZE}&offset=${offset}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(RECORD_TIMEOUT_MS),
+      },
+    );
+    const data = (await res.json()) as {
+      code?: number;
+      msg?: string;
+      message?: string;
+      data?: {
+        fields?: string[];
+        data?: unknown[][];
+        record_id_list?: string[];
+        has_more?: boolean;
+      };
+    };
+    if (data.code !== 0) {
+      throw new FeishuError(
+        `读取数据表 ${tableId} 失败: ${data.message ?? data.msg ?? '未知错误'} (code=${data.code ?? '?'})`,
+        data.code ?? -1,
+      );
+    }
+    const fields = data.data?.fields ?? [];
+    const rows = data.data?.data ?? [];
+    const ids = data.data?.record_id_list ?? [];
+    rows.forEach((row, i) => {
+      const obj: RawItem = { record_id: ids[i] ?? '' };
+      fields.forEach((name, j) => {
+        obj[name] = row[j];
+      });
+      items.push(obj);
+    });
+    if (!data.data?.has_more || rows.length === 0) break;
+    offset += rows.length;
+  }
+
+  return items;
+}
+
 /** 拉岗位的结果 —— 部分分表失败时也返回, 但会标出来 */
 export type FetchJobsResult = {
   jobs: JobPosition[];
   /** 读取失败的分表 (人类可读名) —— 空数组表示全成功 */
   failedTables: string[];
+  /** 实际用的通道 —— 出问题时好定位 */
+  channel?: 'bot' | 'user';
 };
 
 /**
  * 拉全部 8 张表的岗位。
- * @param appId 应用 App ID
- * @param appSecret 应用 App Secret
+ * 优先走机器人身份; 机器人没有应用身份权限时, 自动退到用户身份。
  */
-export async function fetchAllJobs(appId: string, appSecret: string): Promise<FetchJobsResult> {
-  let token = await getTenantToken(appId, appSecret);
+export async function fetchAllJobs(opts: FeishuOpts): Promise<FetchJobsResult> {
+  const { appId, appSecret, userAccessToken, userRefreshToken } = opts;
+  const hasUser = Boolean(userAccessToken || userRefreshToken);
 
-  const readAll = async (): Promise<FetchJobsResult> => {
+  const readAll = async (read: (token: string, tableId: string) => Promise<RawItem[]>, token: string) => {
     // 8 张表并发读, 单张表失败不影响其它表 —— 全部失败才抛错
     const settled = await Promise.allSettled(
       FEISHU_TABLES.map(async ({ track, tableId }) => {
-        const items = await readTable(token, tableId);
+        const items = await read(token, tableId);
         return items.map((raw) => mapRecord(track, raw));
       }),
     );
@@ -153,15 +286,27 @@ export async function fetchAllJobs(appId: string, appSecret: string): Promise<Fe
     return { jobs, failedTables };
   };
 
-  try {
-    return await readAll();
-  } catch (err) {
-    // 99991663 = tenant token 失效, 强制换一次 token 重试
-    if (err instanceof FeishuError && (err.code === 99991663 || err.code === 99991668)) {
-      cachedToken = null;
-      token = await getTenantToken(appId, appSecret);
-      return readAll();
+  if (appId && appSecret) {
+    try {
+      const token = await getTenantToken(appId, appSecret);
+      const result = await readAll(readTableBitable, token);
+      return { ...result, channel: 'bot' };
+    } catch (err) {
+      // 99991672 = 应用身份权限没开通 —— 这时退到用户身份
+      const scopeDenied = err instanceof FeishuError && err.code === 99991672;
+      if (!scopeDenied || !hasUser) throw err;
+      console.warn('[feishu] 机器人身份缺应用身份权限, 改用用户身份');
     }
-    throw err;
   }
+
+  if (!hasUser) {
+    throw new FeishuError(
+      '没有可用的飞书凭证: 需要 FEISHU_APP_ID/FEISHU_APP_SECRET(且应用已开通 bitable:app:readonly), 或 FEISHU_USER_ACCESS_TOKEN',
+      -1,
+    );
+  }
+
+  const token = await getUserToken({ appId, appSecret, userAccessToken, userRefreshToken });
+  const result = await readAll(readTableBaseV3, token);
+  return { ...result, channel: 'user' };
 }
