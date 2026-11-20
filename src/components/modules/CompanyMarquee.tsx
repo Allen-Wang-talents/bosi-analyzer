@@ -7,7 +7,7 @@
 // =====================================================
 import { useMemo } from 'react';
 import { CompanyLogo } from '@/components/ui/CompanyLogo';
-import { resolveCompanyBrand } from '@/data/starCompanies';
+import { resolveCompanyBrand, STAR_COMPANIES } from '@/data/starCompanies';
 import { useJobStore } from '@/store/useJobStore';
 
 const MAX_LOGOS = 30;
@@ -17,7 +17,7 @@ export function CompanyMarquee() {
 
   // 岗位池里真实在招的客户 (去重, 排除空名)
   // 明星 AI 公司排前面 —— 视觉上有分量, 也说明我们在给这些公司招人
-  const { clients, total } = useMemo(() => {
+  const { clients, total, fromPool } = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const j of jobs) {
@@ -33,7 +33,13 @@ export function CompanyMarquee() {
       out.push(name);
     }
     out.sort((a, b) => Number(Boolean(resolveCompanyBrand(b))) - Number(Boolean(resolveCompanyBrand(a))));
-    return { clients: out.slice(0, MAX_LOGOS), total: out.length };
+
+    // 岗位池还没拉到时, 至少把品牌表里的明星公司亮出来, 别让这一条空着
+    if (!out.length) {
+      const names = STAR_COMPANIES.map((c) => c.name);
+      return { clients: names, total: names.length, fromPool: false };
+    }
+    return { clients: out.slice(0, MAX_LOGOS), total: out.length, fromPool: true };
   }, [jobs]);
 
   if (!clients.length) return null;
@@ -49,7 +55,8 @@ export function CompanyMarquee() {
         </span>
         <span className="h-px flex-1 bg-gradient-to-r from-transparent via-border-strong to-transparent" />
         <span className="text-[11px] text-fg-subtle">
-          正在为这些 AI 公司寻访人才{total > MAX_LOGOS ? ` · 等 ${total} 家` : ''}
+          正在为这些 AI 公司寻访人才
+          {fromPool && total > MAX_LOGOS ? ` · 等 ${total} 家` : ''}
         </span>
       </div>
 
