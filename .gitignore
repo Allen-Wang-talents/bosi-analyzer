@@ -33,6 +33,10 @@ netlify/functions/*.zip
 netlify/functions/manifest.json
 .netlify/
 
+# Netlify 函数运行时环境变量(含飞书/MiniMax 凭证), 不进仓库
+netlify/functions/.env
+
 # lark-cli 导出的岗位数据(含客户真名/薪资/点位), 不进仓库
 *.ndjson
 *.manifest.json
+部署环境变量.txt

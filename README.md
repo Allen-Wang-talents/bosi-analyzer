@@ -169,6 +169,42 @@ Vercel 环境变量：
 
 > 飞书应用要先申请 `base:record:read` 权限并被加为「北京AI岗位汇总」的只读协作者，否则读不到岗位。
 
+## 部署到 Netlify（国内可访问的镜像）
+
+`*.vercel.app` 在中国大陆被 DNS 污染（解析到 Twitter 的 IP），所以国内打不开。
+Netlify 的 `*.netlify.app` 能直连，这套镜像就是为此存在的 —— **和 Vercel 跑的是同一份代码**
+（业务逻辑在 `server/`，只有 req/res 适配层各写一份：Vercel 用 `api/`，Netlify 用 `netlify/functions/`）。
+
+线上地址：<https://bosi-analyzer.netlify.app>
+
+```bash
+# CLI 装在临时目录，不污染系统 npm
+npm --cache /tmp/npmcache i --prefix /tmp/netlify-tool netlify-cli
+export PATH="/tmp/netlify-tool/node_modules/.bin:$PATH"
+
+cd ~/Allen\ claude\ code/resume-analyzer
+netlify deploy --prod --no-build --dir=dist --functions=netlify/functions
+```
+
+**三个必须知道的坑：**
+
+1. **环境变量的值上限 5000 字符。** 飞书的 `FEISHU_USER_ACCESS_TOKEN` / `FEISHU_USER_REFRESH_TOKEN`
+   都是 8.5KB 的 JWT，**放不进去**。所以 Netlify 这边只能配应用身份
+   （`FEISHU_APP_ID` + `FEISHU_APP_SECRET`），必须先开通飞书的 `base:record:read` 权限并加只读协作者。
+2. **site 级环境变量只能用 API 建，不能用 `netlify env:set`**（该命令在无 TTY 下静默失败）。
+   正确的接口是 `POST /api/v1/accounts/<account_slug>/env?site_id=<site_id>`，
+   body 形如 `[{"key": "...", "values": [{"context": "production", "value": "..."}]}]`。
+   **不要带 `scopes` 字段** —— 免费计划会报 403「Upgrade your Netlify account to set specific scopes」。
+3. **改了环境变量必须重新部署**，函数运行时环境变量是部署时注入的。
+
+Netlify 环境变量：
+
+| 变量 | 用途 | 长度 |
+|---|---|---|
+| `FEISHU_APP_ID` | 飞书应用 App ID（读岗位池） | 20 |
+| `FEISHU_APP_SECRET` | 飞书应用 App Secret | 32 |
+| `MINIMAX_API_KEY` | MiniMax API Key（AI 解析 / 对话 / 精排） | 125 |
+
 ## 安全说明
 
 - MiniMax M3 API Key 存在浏览器 localStorage，明文保存
