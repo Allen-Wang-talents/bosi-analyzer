@@ -107,14 +107,25 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
   if (cachedUser && now < cachedUser.expiresAt) return cachedUser.token;
 
   if (opts.userAccessToken) {
-    // 没给刷新令牌就只能用这一个, 过期后再靠下面的刷新逻辑兜底
     const exp = jwtExpiry(opts.userAccessToken);
-    cachedUser = {
-      token: opts.userAccessToken,
-      expiresAt: exp ?? now + 90 * 60 * 1000,
-      refreshToken: cachedUser?.refreshToken,
-    };
-    return cachedUser.token;
+    // 令牌还有效才用 —— 过了期的必须往下走去刷新, 否则拿着废令牌去读表必然 401
+    if (exp === null || exp > now + 60_000) {
+      cachedUser = {
+        token: opts.userAccessToken,
+        expiresAt: exp ?? now + 90 * 60 * 1000,
+        refreshToken: cachedUser?.refreshToken ?? opts.userRefreshToken,
+      };
+      return cachedUser.token;
+    }
+    // 过期且没有刷新令牌 —— 只能硬着头皮用这个, 读表会失败
+    if (!opts.userRefreshToken && !cachedUser?.refreshToken) {
+      cachedUser = {
+        token: opts.userAccessToken,
+        expiresAt: exp,
+        refreshToken: cachedUser?.refreshToken,
+      };
+      return cachedUser.token;
+    }
   }
 
   const { appId, appSecret } = opts;
@@ -162,6 +173,23 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
     refreshToken: data.refresh_token ?? refreshToken,
   };
   return token;
+}
+
+/**
+ * 当前用户令牌的快照 —— 刷新之后新的刷新令牌只存在这里,
+ * 上层要把它存到别处(Netlify Blobs), 否则函数一冷启动就没了。
+ */
+export function getUserTokenSnapshot(): {
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+} {
+  if (!cachedUser) return {};
+  return {
+    accessToken: cachedUser.token,
+    refreshToken: cachedUser.refreshToken,
+    expiresAt: cachedUser.expiresAt,
+  };
 }
 
 type RawItem = Record<string, unknown>;
