@@ -122,3 +122,120 @@ html {
   opacity: 1;
   animation: shimmer 1.5s ease-out;
 }
+
+/* =====================================================
+   科技质感 —— 深色区域用的纹理与动效
+   ===================================================== */
+
+/* 科技网格: 两层细线 + 一层粗线, 越靠中心越亮 */
+.tech-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 88px 88px, 88px 88px, 22px 22px, 22px 22px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 35%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 35%, transparent 100%);
+}
+
+/* 扫描线: 一条很淡的横向亮带缓缓下移 */
+.hero-scanline {
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0px,
+    transparent 3px,
+    rgba(255, 255, 255, 0.018) 3px,
+    rgba(255, 255, 255, 0.018) 4px
+  );
+}
+
+/* logo 滚动带 */
+.marquee-track {
+  animation: marquee-scroll 46s linear infinite;
+}
+
+@keyframes marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+}
+
+/* 环形装饰缓慢旋转 */
+.tech-ring {
+  animation: tech-spin 28s linear infinite;
+}
+
+@keyframes tech-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 科技感按钮: 金色描边 + 悬停辉光 */
+.btn-tech {
+  position: relative;
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+.btn-tech:hover {
+  box-shadow: 0 0 0 1px rgba(201, 169, 97, 0.45), 0 8px 30px -8px rgba(201, 169, 97, 0.35);
+}
+
+/* 卡片顶部一道极细的高光, 金属+科技感 */
+.card-sheen {
+  position: relative;
+  overflow: hidden;
+}
+.card-sheen::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(201, 169, 97, 0.55),
+    rgba(255, 255, 255, 0.8),
+    rgba(201, 169, 97, 0.55),
+    transparent
+  );
+  opacity: 0.7;
+}
+
+/* 页面主区: 极淡的科技网格, 压在金属背景上 */
+.page-grid {
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.028) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* 引导高亮: 从轮播点「上传简历」时, 上传卡片闪一下金环 */
+.ring-pulse {
+  animation: ring-pulse 2.4s ease-out;
+  border-radius: 1rem;
+}
+
+@keyframes ring-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(201, 169, 97, 0);
+  }
+  25% {
+    box-shadow: 0 0 0 4px rgba(201, 169, 97, 0.45);
+  }
+  60% {
+    box-shadow: 0 0 0 4px rgba(201, 169, 97, 0.2);
+  }
+}

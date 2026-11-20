@@ -99,7 +99,7 @@ export function Button({
   disabled,
   ...rest
 }: ButtonProps) {
-  const base = 'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-gold/50';
+  const base = 'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium rounded-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-gold/50';
 
   const variants = {
     primary: 'bg-gold-gradient text-bg-base shadow-glow hover:shadow-lg active:scale-[0.98]',

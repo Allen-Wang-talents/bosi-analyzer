@@ -9,6 +9,8 @@ import { AlertTriangle, Database, Loader2 } from 'lucide-react';
 import { ResumeUploadModule } from '@/components/modules/ResumeUploadModule';
 import { JobListModule } from '@/components/modules/JobListModule';
 import { JobDetailPanel } from '@/components/modules/JobDetailPanel';
+import { HeroCarousel } from '@/components/modules/HeroCarousel';
+import { CompanyMarquee } from '@/components/modules/CompanyMarquee';
 import { Card, CardBody, Button } from '@/components/ui/Card';
 import { useAnalysisStore } from '@/store/useAnalysisStore';
 import { useJobStore } from '@/store/useJobStore';
@@ -30,6 +32,9 @@ export function MatchPage() {
   return (
     <main className="flex-1">
       <div className="max-w-[1600px] mx-auto px-6 py-6">
+        <HeroCarousel />
+        <CompanyMarquee />
+
         {jobsDegraded && (
           <div className="mb-4 flex items-start gap-2.5 p-3 rounded-lg bg-status-yellow/10 border border-status-yellow/30">
             <AlertTriangle className="w-4 h-4 text-status-yellow shrink-0 mt-0.5" />

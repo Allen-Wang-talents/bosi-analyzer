@@ -27,18 +27,21 @@ export function Header({ apiKeyStatus }: Props) {
   return (
     <>
       <header className="sticky top-0 z-30 bg-bg-base/80 backdrop-blur-xl border-b border-border">
+        {/* 顶部一道金色渐变高光 —— 科技感的小细节 */}
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent-gold/60 to-transparent" />
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3.5">
-            <div className="h-12 px-2 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)]">
+            <div className="h-12 px-2 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)] card-sheen">
               <img
                 src="/bosi-logo.png"
                 alt="博思人才 BOSHR Logo"
                 className="h-10 w-auto object-contain"
               />
             </div>
-            <div className="leading-tight">
-              <h1 className="text-xl font-bold font-serif text-gold-gradient">
+            {/* 手机上只留 logo 图 (字标在下面那一行太挤), 桌面才显示全称 */}
+            <div className="hidden sm:block leading-tight">
+              <h1 className="text-xl font-bold font-serif text-gold-gradient whitespace-nowrap">
                 博思AI人才推荐网
               </h1>
               <p className="text-[11px] text-fg-muted tracking-[0.2em] uppercase font-medium">BOSS AI TALENT</p>

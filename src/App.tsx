@@ -15,7 +15,7 @@ function App() {
   const view = useJobStore((s) => s.view);
 
   return (
-    <div className="min-h-screen flex flex-col bg-bg-base">
+    <div className="min-h-screen flex flex-col bg-bg-base page-grid">
       <Header apiKeyStatus={apiKeyStatus} />
       {view === 'match' ? <MatchPage /> : <ReviewPage />}
       <Footer />
