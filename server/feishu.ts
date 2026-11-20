@@ -37,7 +37,9 @@ const RECORD_TIMEOUT_MS = 8_000;
 
 // token 缓存: 过期前 5 分钟失效
 let cachedToken: { token: string; expiresAt: number } | null = null;
-let cachedUser: { token: string; expiresAt: number; refreshToken?: string } | null = null;
+// refreshed 标记这次令牌是不是「刚刚刷新出来的」—— 只有刚刷出来的才允许写回存储,
+// 否则老实例会拿旧令牌把新的盖掉
+let cachedUser: { token: string; expiresAt: number; refreshToken?: string; refreshed: boolean } | null = null;
 
 export class FeishuError extends Error {
   code: number;
@@ -102,7 +104,7 @@ function jwtExpiry(token: string): number | null {
  * 拿一个能用的用户令牌。
  * 优先用缓存 —— 其次用环境变量里的 —— 最后拿刷新令牌换新的。
  */
-async function getUserToken(opts: FeishuOpts): Promise<string> {
+export async function getUserToken(opts: FeishuOpts): Promise<string> {
   const now = Date.now();
   if (cachedUser && now < cachedUser.expiresAt) return cachedUser.token;
 
@@ -114,6 +116,7 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
         token: opts.userAccessToken,
         expiresAt: exp ?? now + 90 * 60 * 1000,
         refreshToken: cachedUser?.refreshToken ?? opts.userRefreshToken,
+        refreshed: false,
       };
       return cachedUser.token;
     }
@@ -123,6 +126,7 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
         token: opts.userAccessToken,
         expiresAt: exp,
         refreshToken: cachedUser?.refreshToken,
+        refreshed: false,
       };
       return cachedUser.token;
     }
@@ -171,6 +175,7 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
     expiresAt: now + Math.max(60, (data.expires_in ?? 7200) - 300) * 1000,
     // 飞书的刷新令牌是一次性的 —— 用一次就换新的, 旧的立即作废
     refreshToken: data.refresh_token ?? refreshToken,
+    refreshed: true,
   };
   return token;
 }
@@ -178,18 +183,27 @@ async function getUserToken(opts: FeishuOpts): Promise<string> {
 /**
  * 当前用户令牌的快照 —— 刷新之后新的刷新令牌只存在这里,
  * 上层要把它存到别处(Netlify Blobs), 否则函数一冷启动就没了。
+ *
+ * refreshed=true 才代表「这是刚换出来的令牌」, 只有这种才允许写回存储。
  */
 export function getUserTokenSnapshot(): {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
+  refreshed: boolean;
 } {
-  if (!cachedUser) return {};
+  if (!cachedUser) return { refreshed: false };
   return {
     accessToken: cachedUser.token,
     refreshToken: cachedUser.refreshToken,
     expiresAt: cachedUser.expiresAt,
+    refreshed: cachedUser.refreshed,
   };
+}
+
+/** 丢掉缓存的用户令牌 —— 刷新失败后重新读一次存储里的令牌时用 */
+export function clearUserTokenCache(): void {
+  cachedUser = null;
 }
 
 type RawItem = Record<string, unknown>;

@@ -11,7 +11,7 @@
 // 直接打 Blobs 的 REST 接口读写是通的, 所以这里手写 fetch。
 // =====================================================
 import { getJobsPayload } from '../../server/jobsService.ts';
-import { getUserTokenSnapshot } from '../../server/feishu.ts';
+import { getUserTokenSnapshot, clearUserTokenCache } from '../../server/feishu.ts';
 
 // 拉飞书最多允许跑 60 秒 —— 默认的 10 秒上限不够 8 张表分页读完
 export const config = { timeout: 60 };
@@ -73,19 +73,37 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   const force = new URL(req.url).searchParams.get('refresh') === '1';
-  const stored = await readTokens();
+  let stored = await readTokens();
 
-  const payload = await getJobsPayload({
-    appId: process.env.FEISHU_APP_ID,
-    appSecret: process.env.FEISHU_APP_SECRET,
-    userAccessToken: stored?.accessToken ?? process.env.FEISHU_USER_ACCESS_TOKEN,
-    userRefreshToken: stored?.refreshToken ?? process.env.FEISHU_USER_REFRESH_TOKEN,
-    force,
-  });
+  const load = (s: StoredTokens | null) =>
+    getJobsPayload({
+      appId: process.env.FEISHU_APP_ID,
+      appSecret: process.env.FEISHU_APP_SECRET,
+      userAccessToken: s?.accessToken ?? process.env.FEISHU_USER_ACCESS_TOKEN,
+      userRefreshToken: s?.refreshToken ?? process.env.FEISHU_USER_REFRESH_TOKEN,
+      force,
+    });
 
-  // 刷新过令牌就把新的存回去 —— 飞书的刷新令牌是一次性的, 不存就等于没刷新
+  let payload;
+  try {
+    payload = await load(stored);
+  } catch (err) {
+    // 老实例可能攥着已经被换掉的刷新令牌 → 丢掉缓存, 重读一次存储里的令牌再试
+    clearUserTokenCache();
+    const fresh = await readTokens();
+    if (fresh?.accessToken && fresh.accessToken !== stored?.accessToken) {
+      console.warn('[jobs] 缓存令牌失效, 用存储里的新令牌重试');
+      stored = fresh;
+      payload = await load(fresh);
+    } else {
+      throw err;
+    }
+  }
+
+  // 只在「刚刚刷新出新令牌」时才写回 —— 飞书的刷新令牌是一次性的, 不存就等于没刷新。
+  // 反过来, 拿旧令牌写回会把新的盖掉, 所以必须以 refreshed 为准, 不能比字符串。
   const snapshot = getUserTokenSnapshot();
-  if (snapshot.refreshToken && snapshot.refreshToken !== stored?.refreshToken) {
+  if (snapshot.refreshed && snapshot.accessToken && snapshot.refreshToken) {
     await writeTokens({
       accessToken: snapshot.accessToken,
       refreshToken: snapshot.refreshToken,
