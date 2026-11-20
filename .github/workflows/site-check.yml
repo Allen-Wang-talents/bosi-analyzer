@@ -35,6 +35,17 @@ jobs:
             && echo "渲染 OK (React 已挂载)" \
             || { echo "::error::首页 JS 没渲染出来"; exit 1; }
 
+      # 首页轮播是 React 树里最重的一块, 它一崩整页都会白屏 ——
+      # 所以除了页签, 还要确认轮播大图和 logo 滚动带真的渲染出来了。
+      - name: 首页轮播大图渲染了吗
+        run: |
+          grep -q 'Trusted By' /tmp/dom.html \
+            && echo "logo 滚动带 OK" \
+            || { echo "::error::logo 滚动带没渲染出来"; exit 1; }
+          grep -q '屏:' /tmp/dom.html \
+            && echo "岗位轮播 OK" \
+            || { echo "::error::岗位轮播没渲染出来"; exit 1; }
+
       - name: 健康检查接口
         run: |
           code=$(curl -s -o /tmp/health -w '%{http_code}' --max-time 25 "${{ matrix.base }}/api/health")
