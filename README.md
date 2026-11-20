@@ -186,24 +186,30 @@ cd ~/Allen\ claude\ code/resume-analyzer
 netlify deploy --prod --no-build --dir=dist --functions=netlify/functions
 ```
 
-**三个必须知道的坑：**
+**四个必须知道的坑：**
 
 1. **环境变量的值上限 5000 字符。** 飞书的 `FEISHU_USER_ACCESS_TOKEN` / `FEISHU_USER_REFRESH_TOKEN`
-   都是 8.5KB 的 JWT，**放不进去**。所以 Netlify 这边只能配应用身份
-   （`FEISHU_APP_ID` + `FEISHU_APP_SECRET`），必须先开通飞书的 `base:record:read` 权限并加只读协作者。
-2. **site 级环境变量只能用 API 建，不能用 `netlify env:set`**（该命令在无 TTY 下静默失败）。
+   都是 8.5KB 的 JWT，**放不进去**。所以令牌存在 Netlify Blobs 里，函数冷启动读出来用，刷新后写回去。
+   令牌同步用 `scripts/sync-feishu-token.mjs`（会先按需刷新，再写进 Blobs，最后读回校验）。
+2. **不要用 `@netlify/blobs` SDK。** 实测它走签名 URL 通道，写进去的 blob 用同一个 API 读不到
+   （SDK `get` 返回 undefined、API GET 返回 404），list 却是正常的 —— 很容易误判成"写成功了"。
+   直接打 REST 接口 `https://api.netlify.com/api/v1/blobs/<site_id>/<store>/<key>` 读写是通的。
+3. **site 级环境变量只能用 API 建，不能用 `netlify env:set`**（该命令在无 TTY 下静默失败）。
    正确的接口是 `POST /api/v1/accounts/<account_slug>/env?site_id=<site_id>`，
    body 形如 `[{"key": "...", "values": [{"context": "production", "value": "..."}]}]`。
    **不要带 `scopes` 字段** —— 免费计划会报 403「Upgrade your Netlify account to set specific scopes」。
-3. **改了环境变量必须重新部署**，函数运行时环境变量是部署时注入的。
+4. **改了环境变量必须重新部署**，函数运行时环境变量是部署时注入的。
 
 Netlify 环境变量：
 
 | 变量 | 用途 | 长度 |
 |---|---|---|
-| `FEISHU_APP_ID` | 飞书应用 App ID（读岗位池） | 20 |
+| `FEISHU_APP_ID` | 飞书应用 App ID（换用户令牌用） | 20 |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret | 32 |
 | `MINIMAX_API_KEY` | MiniMax API Key（AI 解析 / 对话 / 精排） | 125 |
+| `NETLIFY_BLOBS_TOKEN` | Netlify 个人令牌，函数读写 Blobs 里的飞书令牌用 | 40 |
+
+令牌在 Blobs 里的位置：`bosi-secrets` / `feishu-user-token`。
 
 ## 安全说明
 
