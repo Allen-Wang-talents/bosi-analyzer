@@ -51,11 +51,11 @@ export const STAR_COMPANIES: StarCompany[] = [
   },
   {
     name: '生数科技',
-    en: 'VIRTUOLOGY',
+    en: 'SHENGSHU TECH',
     color: '#22D3AA',
     mark: '生',
-    logo: '/logos/virtuology.svg',
-    aliases: ['生数科技', '生数'],
+    logo: '/logos/shengshu.png',
+    aliases: ['生数科技', '生数', 'shengshu', 'shengshu technology'],
   },
   {
     name: '雷鸟创新',

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="01.AI">
-  <rect width="512" height="512" rx="96" fill="#001a12"/>
+<svg width="512.0" height="512.0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="01.AI">
+  <rect width="512.0" height="512.0" rx="96" fill="#001a12"/>
   <text x="256" y="284" text-anchor="middle"
         fill="#ffffff"
         font-family="Inter, Arial, Helvetica, sans-serif"
