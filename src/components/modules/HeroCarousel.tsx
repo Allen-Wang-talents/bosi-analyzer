@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, MapPin, Sparkles } from 'lucide-react';
 import { cn } from '@/components/ui/Card';
-import { useCompanyBrand } from '@/components/ui/CompanyLogo';
+import { BrandMark, BrandPlate, useCompanyBrand } from '@/components/ui/CompanyLogo';
 import { resolveCompanyBrand, STAR_COMPANIES } from '@/data/starCompanies';
 import { useJobStore } from '@/store/useJobStore';
 import type { JobPosition } from '../../../shared/jobs.ts';
@@ -268,22 +268,20 @@ function brandColor(job: JobPosition): string {
   return resolveCompanyBrand(job.client)?.color ?? '#6C8CFF';
 }
 
-/** 大标题里的客户名 —— 品牌色渐变字 + 英文小字 */
+/** 大标题里的客户名 —— 白底官方 logo 牌 + 品牌色字 + 英文小字 */
 function HeroBrand({ client }: { client: string }) {
   const { brand, label, en } = useCompanyBrand(client);
   const color = brand?.color ?? '#8CA0FF';
   return (
     <div className="flex items-center gap-4">
-      <div
-        className="w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-bold relative overflow-hidden shrink-0"
-        style={{
-          background: `linear-gradient(140deg, ${color}33, ${color}12)`,
-          border: `1px solid ${color}55`,
-          boxShadow: `0 0 26px ${color}44, inset 0 1px 0 rgba(255,255,255,0.15)`,
-          color,
-        }}
-      >
-        <span className="relative">{brand?.mark ?? label.slice(0, 1)}</span>
+      <div className="relative shrink-0">
+        {/* 品牌色光晕垫在牌子下面, 白牌才有立体感 */}
+        <span
+          className="absolute -inset-2.5 rounded-[26px] blur-xl"
+          style={{ background: `radial-gradient(circle, ${color}66, transparent 70%)` }}
+          aria-hidden
+        />
+        <BrandPlate client={client} size="lg" tone="dark" className="relative" />
       </div>
       <div className="min-w-0">
         <p
@@ -302,9 +300,9 @@ function HeroBrand({ client }: { client: string }) {
   );
 }
 
-/** 右侧大圆盘: 同心环 + 中心徽标 + 旋转光弧 */
+/** 右侧大圆盘: 同心环 + 中心官方 logo 白牌 + 旋转光弧 */
 function HeroOrb({ client }: { client: string }) {
-  const { brand, mark } = useCompanyBrand(client);
+  const { brand } = useCompanyBrand(client);
   const color = brand?.color ?? '#6C8CFF';
   return (
     <div className="relative w-full h-full flex items-center justify-center">
@@ -328,17 +326,16 @@ function HeroOrb({ client }: { client: string }) {
           backdropFilter: 'blur(6px)',
         }}
       />
-      {/* 中心徽标 */}
+      {/* 中心: 白底官方 logo (牌子跟着 logo 长宽走, 不裁字标) */}
       <div
-        className="relative flex items-center justify-center w-[38%] aspect-square rounded-3xl font-bold text-4xl md:text-5xl"
+        className="relative flex items-center justify-center max-w-[78%] rounded-[26px] px-8 py-6"
         style={{
-          color,
-          background: `linear-gradient(140deg, ${color}30, rgba(255,255,255,0.03))`,
-          border: `1px solid ${color}66`,
-          boxShadow: `0 0 60px ${color}55, inset 0 1px 0 rgba(255,255,255,0.18)`,
+          background: '#FFFFFF',
+          border: '1px solid rgba(255,255,255,0.55)',
+          boxShadow: `0 0 60px ${color}66, 0 18px 40px -18px rgba(0,0,0,0.6)`,
         }}
       >
-        {mark}
+        <BrandMark client={client} height={74} maxWidth={250} />
       </div>
       {/* 环绕小点 */}
       {[

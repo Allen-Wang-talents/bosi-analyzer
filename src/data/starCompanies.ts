@@ -1,13 +1,12 @@
 // =====================================================
 // 明星 AI 公司品牌表 —— 首页轮播 / logo 墙用
 //
-// 为什么自己造字标而不用官方 logo:
-//   1) 国内 AI 公司的官方 logo 素材拿不到, 也不适合直接商用;
-//   2) 岗位池里 72 家客户, 名字格式五花八门 ("月之暗面|kimi"、"本衍极智|BENYOND AI"),
-//      真 logo 覆盖率极低, 缺的只能退化成文字, 视觉就不统一了。
-//   所以统一用「字母/汉字徽标 + 中英文名」, 每个品牌给一个专属色, 靠排版做质感。
+// logo 都是各家公司官网上的官方素材, 存在 public/logos/ 下:
+//   有的是纯图形 (百度爪印、DeepSeek 鲸), 有的是中英文字标 (RayNeo、商汤),
+//   还有的整块深色底 (01.AI、理想) —— 风格差得远, 所以前端统一套一层白底牌子。
+// 没扒到官方 logo 的公司 (星河觉醒、中科闻歌等) 退化成文字徽标, 牌子一样, 不断层。
 //
-// 品牌色是公开的品牌识别色 (取自各家官网/公开设计系统), 仅用于识别, 不复刻 logo 图形。
+// 排列顺序 = 轮播出场顺序: 有官方 logo 的公司排在前面, 保证轮播头几屏都是真 logo。
 // =====================================================
 
 export type StarCompany = {
@@ -17,8 +16,10 @@ export type StarCompany = {
   en: string;
   /** 品牌识别色 */
   color: string;
-  /** 徽标上的字 (1-2 个字符) */
+  /** 徽标上的字 (1-2 个字符) —— 没有官方 logo 时的兜底 */
   mark: string;
+  /** 官方 logo 素材路径 (public/logos/ 下) */
+  logo?: string;
   /** 别名 —— 用来把岗位池里的客户名归一 */
   aliases: string[];
 };
@@ -29,6 +30,7 @@ export const STAR_COMPANIES: StarCompany[] = [
     en: 'MOONSHOT AI',
     color: '#6C8CFF',
     mark: '月',
+    logo: '/logos/moonshot.svg',
     aliases: ['月之暗面', 'kimi', '月之暗面|kimi', 'moonshot'],
   },
   {
@@ -36,6 +38,7 @@ export const STAR_COMPANIES: StarCompany[] = [
     en: 'DEEPSEEK',
     color: '#4D6BFE',
     mark: 'DS',
+    logo: '/logos/deepseek.svg',
     aliases: ['deepseek', '深度求索', 'deepseek|深度求索'],
   },
   {
@@ -43,6 +46,7 @@ export const STAR_COMPANIES: StarCompany[] = [
     en: 'MINIMAX',
     color: '#FF6B6B',
     mark: 'MM',
+    logo: '/logos/minimax.svg',
     aliases: ['minimax', '稀宇科技'],
   },
   {
@@ -50,13 +54,71 @@ export const STAR_COMPANIES: StarCompany[] = [
     en: 'VIRTUOLOGY',
     color: '#22D3AA',
     mark: '生',
+    logo: '/logos/virtuology.svg',
     aliases: ['生数科技', '生数'],
+  },
+  {
+    name: '雷鸟创新',
+    en: 'RAYNEO',
+    color: '#8B5CF6',
+    mark: '雷',
+    logo: '/logos/rayneo.png',
+    aliases: ['雷鸟创新', '雷鸟', 'rayneo'],
+  },
+  {
+    name: '知乎',
+    en: 'ZHIHU',
+    color: '#0F766E',
+    mark: '知',
+    logo: '/logos/zhihu.svg',
+    aliases: ['知乎', 'zhihu'],
+  },
+  {
+    name: '自然选择',
+    en: 'NATURE SELECT',
+    color: '#22C55E',
+    mark: '然',
+    logo: '/logos/natureselect.svg',
+    aliases: ['自然选择'],
+  },
+  {
+    name: '光帆科技',
+    en: 'GUANGFAN',
+    color: '#06B6D4',
+    mark: '帆',
+    logo: '/logos/guangfan.svg',
+    aliases: ['光帆科技', '光帆'],
+  },
+  {
+    name: 'NovusVita AI',
+    en: 'NOVUSVITA',
+    color: '#6366F1',
+    mark: 'NV',
+    logo: '/logos/novusvita.svg',
+    aliases: ['novusvita ai', 'novusvita'],
+  },
+  {
+    name: '无限谷',
+    en: 'INFINITE VALLEY',
+    color: '#14B8A6',
+    mark: '谷',
+    logo: '/logos/wuxiangu.jpg',
+    aliases: ['无限谷'],
+  },
+  {
+    name: '灵动时刻',
+    en: 'VIVIX',
+    color: '#EC4899',
+    mark: 'V',
+    logo: '/logos/vivix.svg',
+    aliases: ['灵动时刻', 'vivix', '灵动时刻vivix', 'vivix灵动时刻'],
   },
   {
     name: '字节跳动',
     en: 'BYTEDANCE',
     color: '#3B82F6',
     mark: '字',
+    logo: '/logos/bytedance.svg',
     aliases: ['字节跳动', '字节', '豆包', '火山引擎', 'bytedance'],
   },
   {
@@ -64,7 +126,80 @@ export const STAR_COMPANIES: StarCompany[] = [
     en: 'ALIBABA',
     color: '#FF8A3D',
     mark: '阿',
+    logo: '/logos/alibaba.svg',
     aliases: ['阿里巴巴', '阿里', '通义', '通义千问', 'alibaba', '阿里云', '达摩院'],
+  },
+  {
+    name: '百度',
+    en: 'BAIDU',
+    color: '#4C6EF5',
+    mark: '百',
+    logo: '/logos/baidu.svg',
+    aliases: ['百度', '文心一言', '百度智能云', 'baidu'],
+  },
+  {
+    name: '智谱 AI',
+    en: 'ZHIPU AI',
+    color: '#7C5CFF',
+    mark: '谱',
+    logo: '/logos/zhipu.svg',
+    aliases: ['智谱', '智谱ai', 'zhipu', '清言'],
+  },
+  {
+    name: '零一万物',
+    en: '01.AI',
+    color: '#F43F5E',
+    mark: '01',
+    logo: '/logos/01ai.svg',
+    aliases: ['零一万物', '零一万', '01.ai'],
+  },
+  {
+    name: '阶跃星辰',
+    en: 'STEPFUN',
+    color: '#0EA5E9',
+    mark: '阶',
+    logo: '/logos/stepfun.svg',
+    aliases: ['阶跃星辰', '阶跃', 'stepfun'],
+  },
+  {
+    name: '商汤科技',
+    en: 'SENSETIME',
+    color: '#F59E0B',
+    mark: '商',
+    logo: '/logos/sensetime.png',
+    aliases: ['商汤', '商汤科技', 'sensetime', '日日新'],
+  },
+  {
+    name: '科大讯飞',
+    en: 'IFLYTEK',
+    color: '#E11D48',
+    mark: '科',
+    logo: '/logos/iflytek.png',
+    aliases: ['科大讯飞', '讯飞', 'iflytek', '星火'],
+  },
+  {
+    name: '小鹏汽车',
+    en: 'XPENG',
+    color: '#10B981',
+    mark: '鹏',
+    logo: '/logos/xpeng.svg',
+    aliases: ['小鹏', '小鹏汽车', 'xpeng'],
+  },
+  {
+    name: '蔚来',
+    en: 'NIO',
+    color: '#0EA5E9',
+    mark: '蔚',
+    logo: '/logos/nio.svg',
+    aliases: ['蔚来', 'nio'],
+  },
+  {
+    name: '理想汽车',
+    en: 'LI AUTO',
+    color: '#F97316',
+    mark: '理',
+    logo: '/logos/liauto.png',
+    aliases: ['理想', '理想汽车', 'li auto'],
   },
   {
     name: '腾讯',
@@ -74,34 +209,6 @@ export const STAR_COMPANIES: StarCompany[] = [
     aliases: ['腾讯', '腾讯混元', 'tencent', '混元'],
   },
   {
-    name: '百度',
-    en: 'BAIDU',
-    color: '#4C6EF5',
-    mark: '百',
-    aliases: ['百度', '文心一言', '百度智能云', 'baidu'],
-  },
-  {
-    name: '智谱 AI',
-    en: 'ZHIPU AI',
-    color: '#7C5CFF',
-    mark: '谱',
-    aliases: ['智谱', '智谱ai', 'zhipu', '清言'],
-  },
-  {
-    name: '零一万物',
-    en: '01.AI',
-    color: '#F43F5E',
-    mark: '01',
-    aliases: ['零一万物', '零一万', '01.ai'],
-  },
-  {
-    name: '阶跃星辰',
-    en: 'STEPFUN',
-    color: '#0EA5E9',
-    mark: '阶',
-    aliases: ['阶跃星辰', '阶跃', 'stepfun'],
-  },
-  {
     name: '中科闻歌',
     en: 'WENGEES',
     color: '#14B8A6',
@@ -109,88 +216,11 @@ export const STAR_COMPANIES: StarCompany[] = [
     aliases: ['中科闻歌', '闻歌'],
   },
   {
-    name: '商汤科技',
-    en: 'SENSETIME',
-    color: '#F59E0B',
-    mark: '商',
-    aliases: ['商汤', '商汤科技', 'sensetime', '日日新'],
-  },
-  {
-    name: '科大讯飞',
-    en: 'IFLYTEK',
-    color: '#E11D48',
-    mark: '科',
-    aliases: ['科大讯飞', '讯飞', 'iflytek', '星火'],
-  },
-  {
-    name: '小鹏汽车',
-    en: 'XPENG',
-    color: '#10B981',
-    mark: '鹏',
-    aliases: ['小鹏', '小鹏汽车', 'xpeng'],
-  },
-  {
-    name: '蔚来',
-    en: 'NIO',
-    color: '#0EA5E9',
-    mark: '蔚',
-    aliases: ['蔚来', 'nio'],
-  },
-  {
-    name: '理想汽车',
-    en: 'LI AUTO',
-    color: '#F97316',
-    mark: '理',
-    aliases: ['理想', '理想汽车', 'li auto'],
-  },
-  {
-    name: '雷鸟创新',
-    en: 'RAYNIO',
-    color: '#8B5CF6',
-    mark: '雷',
-    aliases: ['雷鸟创新', '雷鸟'],
-  },
-  {
-    name: '知乎',
-    en: 'ZHIHU',
-    color: '#0F766E',
-    mark: '知',
-    aliases: ['知乎', 'zhihu'],
-  },
-  {
-    name: '自然选择',
-    en: 'NATURAL SELECT',
-    color: '#22C55E',
-    mark: '然',
-    aliases: ['自然选择'],
-  },
-  {
     name: '星河觉醒',
     en: 'AWAKEN AI',
     color: '#EC4899',
     mark: '星',
     aliases: ['星河觉醒', '星河觉醒|awaken ai', 'awaken ai'],
-  },
-  {
-    name: '光帆科技',
-    en: 'SAILFORGE',
-    color: '#06B6D4',
-    mark: '帆',
-    aliases: ['光帆科技', '光帆'],
-  },
-  {
-    name: 'NovusVita AI',
-    en: 'NOVUSVITA',
-    color: '#6366F1',
-    mark: 'NV',
-    aliases: ['novusvita ai', 'novusvita'],
-  },
-  {
-    name: '无限谷',
-    en: 'INFINITE VALLEY',
-    color: '#14B8A6',
-    mark: '谷',
-    aliases: ['无限谷'],
   },
   {
     name: '星火之海',
