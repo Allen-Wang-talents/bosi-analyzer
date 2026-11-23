@@ -17,6 +17,26 @@ import { setApiKeyGetter, ApiKeyMissingError, checkServerHealth, polishSummary }
 const HISTORY_LIMIT = 50;
 const STORAGE_KEY = 'bosi:analyzer:v1';
 
+/**
+ * 校验导入的权重 —— 五个维度都得是有限的非负数。
+ * 少一个 / 是字符串 / 是负数 / 是 NaN → 整个导入作废。
+ * (age 允许缺失, 按 0 处理 —— 早期导出的配置里没有这一项)
+ */
+function sanitizeWeights(raw: unknown): Weights | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const out: Partial<Weights> = {};
+  for (const key of ['education', 'company', 'projects', 'fit'] as const) {
+    const n = Number(src[key]);
+    if (src[key] === undefined || src[key] === null || !Number.isFinite(n) || n < 0) return null;
+    out[key] = n;
+  }
+  const age = src.age === undefined || src.age === null ? 0 : Number(src.age);
+  if (!Number.isFinite(age) || age < 0) return null;
+  out.age = age;
+  return out as Weights;
+}
+
 // =====================================================
 // State
 // =====================================================
@@ -105,6 +125,41 @@ const initialState: State = {
 let recomputeTimer: ReturnType<typeof setTimeout> | null = null;
 const RECOMPUTE_DELAY = 400;
 
+// 历史记录自动保存 —— 评分完就算一次「完成了一次分析」。
+// 用静默期兜底: 用户还在改 JD 的时候不落记录, 停下来 5 秒后才存,
+// 否则每敲几个字就多一条历史。
+let historyTimer: ReturnType<typeof setTimeout> | null = null;
+const HISTORY_SAVE_DELAY = 5000;
+
+function historySignature(input: {
+  jd?: JD | null;
+  candidate?: Candidate | null;
+  company?: Company | null;
+}): string {
+  return [
+    (input.jd?.rawText ?? '').slice(0, 500),
+    input.candidate?.name ?? '',
+    input.candidate?.currentCompany ?? '',
+    String(input.candidate?.totalYears ?? ''),
+    (input.candidate?.skills ?? []).join(','),
+    input.company?.name ?? '',
+  ].join('|');
+}
+
+function maybeSaveHistory(get: () => State & Actions) {
+  if (historyTimer) clearTimeout(historyTimer);
+  historyTimer = setTimeout(() => {
+    historyTimer = null;
+    const { jd, candidate, company, analysis, history } = get();
+    if (!analysis || !jd || !candidate) return;
+    const sig = historySignature({ jd, candidate, company });
+    const latest = history[0];
+    // 同一份 JD + 同一个候选人只存一条
+    if (latest && historySignature(latest) === sig) return;
+    get().saveToHistory();
+  }, HISTORY_SAVE_DELAY);
+}
+
 // =====================================================
 // Store
 // =====================================================
@@ -149,6 +204,7 @@ export const useAnalysisStore = create<State & Actions>()(
             weights: settings.weights,
           });
           set({ analysis: result });
+          maybeSaveHistory(get);
         } catch (e) {
           console.error('评分失败:', e);
           set({ analysis: null });
@@ -214,7 +270,16 @@ export const useAnalysisStore = create<State & Actions>()(
           const patch: Partial<State['settings']> = {};
           if (data.schoolTiers) patch.schoolTiers = data.schoolTiers;
           if (data.companyTiers) patch.companyTiers = data.companyTiers;
-          if (data.weights) patch.weights = data.weights;
+          if (data.weights) {
+            // 权重必须逐项校验 —— 导入的文件里塞个 "education": "abc" 或负数,
+            // 算出来就是 NaN 分, 整个报告作废。宁可拒掉也别让分数变 NaN。
+            const w = sanitizeWeights(data.weights);
+            if (!w) {
+              console.error('导入失败: 权重格式不对');
+              return false;
+            }
+            patch.weights = w;
+          }
           get().updateSettings(patch);
           scheduleRecompute(get, 0);
           return true;
@@ -345,6 +410,10 @@ export const useAnalysisStore = create<State & Actions>()(
           setApiKeyGetter(() => state.settings.anthropicApiKey);
           const key = state.settings.anthropicApiKey?.trim();
           if (key) state.apiKeyStatus = 'configured';
+          // analysis 没进 partialize (它是算出来的, 不值得存) ——
+          // 所以 hydrate 完要重算一次, 否则刷新后深度评鉴永远停在
+          // "正在生成分析…解析中, 请稍候"
+          state.runAnalysis();
           // app 启动后会自动 checkServerStatus
         }
       },

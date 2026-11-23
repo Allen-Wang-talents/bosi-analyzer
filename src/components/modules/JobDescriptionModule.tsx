@@ -4,6 +4,7 @@
 import { useMemo } from 'react';
 import { FileText, Sparkles } from 'lucide-react';
 import { Card, CardHeader, CardBody, TextArea, Badge } from '@/components/ui/Card';
+import { parseJd } from '@/lib/parseJd';
 import type { JD } from '@/types';
 
 type Props = {
@@ -23,8 +24,11 @@ export function JobDescriptionModule({ value, onChange }: Props) {
   };
 
   const handleTextChange = (text: string) => {
-    // 立即更新原文，不做实时解析（避免输入卡顿）
-    onChange({ ...jd, rawText: text });
+    // 解析一遍 —— 否则 JD 只有一段原文，标题/技能/年限全是空的，
+    // 深度评鉴的技能分恒为 0、年限按"要求 0 年"打分。
+    // parseJd 是纯正则，10k 字以内开销可以忽略。
+    const parsed = parseJd(text);
+    onChange(parsed ? { ...jd, ...parsed, rawText: text } : { ...jd, rawText: text });
   };
 
   // 显示已解析的字段（如果有）

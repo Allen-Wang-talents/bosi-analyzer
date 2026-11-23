@@ -16,32 +16,77 @@ import { scoreAge } from './scoreAge';
 //   也强制 floor 到 50, 保证推荐档位不为"不推荐".
 const MIN_DIMENSION_SCORE = 50;
 
+type DimensionName = DimensionResult['name'];
+
+/**
+ * 权重归一化 —— 导入的权重可能是一堆垃圾 (NaN / 负数 / 字符串 / 总和不为 100)。
+ *
+ * 规则:
+ *   1. 非有限值和负数一律当 0
+ *   2. 按实际总和归一 —— 之前是直接 /100, 权重总和要是 120, 总分就能冲到 120
+ *   3. 全 0 的话五维等权, 至少还能算出一个合理的分
+ */
+export function normalizeWeights(weights: Weights): Record<DimensionName, number> {
+  const safe = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const raw: Record<DimensionName, number> = {
+    education: safe(weights.education),
+    company: safe(weights.company),
+    projects: safe(weights.projects),
+    fit: safe(weights.fit),
+    age: safe(weights.age),
+  };
+  const sum = raw.education + raw.company + raw.projects + raw.fit + raw.age;
+  if (sum <= 0) {
+    return { education: 0.2, company: 0.2, projects: 0.2, fit: 0.2, age: 0.2 };
+  }
+  return {
+    education: raw.education / sum,
+    company: raw.company / sum,
+    projects: raw.projects / sum,
+    fit: raw.fit / sum,
+    age: raw.age / sum,
+  };
+}
+
+/** Floor 50: 任何维度原始分 < 50 强制拉到 50 */
+function floorDimensions(dimensions: DimensionResult[]): DimensionResult[] {
+  return dimensions.map((d) =>
+    d.score < MIN_DIMENSION_SCORE ? { ...d, score: MIN_DIMENSION_SCORE } : d,
+  );
+}
+
+/**
+ * 综合分 —— 摘要和评分环必须用同一个算法。
+ * 之前摘要用的是「原始分 + 按权重总和归一」, 评分环用的是「floor 50 后的分 +
+ * 按 100 归一」—— 只要有维度低于 50, 摘要里的总分和环上的总分就对不上。
+ */
+export function computeTotal(
+  dimensions: DimensionResult[],
+  weights: Weights,
+): { total: number; dimensions: DimensionResult[] } {
+  const w = normalizeWeights(weights);
+  const floored = floorDimensions(dimensions);
+  const total = floored.reduce((s, d) => s + d.score * w[d.name], 0);
+  return { total: Math.round(total * 10) / 10, dimensions: floored };
+}
+
 export function aggregateScore(
   dimensions: DimensionResult[],
   weights: Weights,
   summary: string
 ): ScoreResult {
-  const totalWeight = weights.education + weights.company + weights.projects + weights.fit + (weights.age ?? 0);
-  if (Math.abs(totalWeight - 100) > 0.5) {
-    console.warn(`权重总和不为 100: ${totalWeight}`);
+  const rawTotal = weights.education + weights.company + weights.projects + weights.fit + (weights.age ?? 0);
+  if (!Number.isFinite(rawTotal) || Math.abs(rawTotal - 100) > 0.5) {
+    console.warn(`权重总和不为 100: ${rawTotal}`);
   }
 
-  // 归一化权重 (0-1)
-  const w = {
-    education: weights.education / 100,
-    company: weights.company / 100,
-    projects: weights.projects / 100,
-    fit: weights.fit / 100,
-    age: (weights.age ?? 0) / 100,
-  };
+  const w = normalizeWeights(weights);
 
   // Floor 50: 任何维度原始分 < 50 强制拉到 50
-  const flooredDims: DimensionResult[] = dimensions.map((d) => {
-    if (d.score < MIN_DIMENSION_SCORE) {
-      return { ...d, score: MIN_DIMENSION_SCORE };
-    }
-    return d;
-  });
+  const flooredDims = floorDimensions(dimensions);
 
   // 更新 dimension 的 weight 字段
   flooredDims.forEach((d) => {
@@ -91,19 +136,14 @@ export function runFullScoring(input: ScoringInput): ScoreResult {
 // 输出三段：整体定位 / 匹配亮点 / 关键差距
 // 由 UI 触发「AI 润色」按钮后可被 LLM 二次润色 (summarySource='llm')
 // =====================================================
-function generateSummary(input: ScoringInput, dims: DimensionResult[]): string {
+function generateSummary(input: ScoringInput, rawDims: DimensionResult[]): string {
   const { candidate, jd, profile } = input;
+  // 摘要里引用的维度分也要用 floor 50 之后的版本, 否则会出现
+  // 「摘要说学历 45 分, 评分环显示 50 分」这种前后不一致
+  const dims = floorDimensions(rawDims);
 
-  const totalWeight = (input.weights.education + input.weights.company + input.weights.projects + input.weights.fit + (input.weights.age ?? 0)) || 100;
-  const w = {
-    education: input.weights.education / totalWeight,
-    company: input.weights.company / totalWeight,
-    projects: input.weights.projects / totalWeight,
-    fit: input.weights.fit / totalWeight,
-    age: (input.weights.age ?? 0) / totalWeight,
-  };
-  const total = dims.reduce((s, d) => s + d.score * w[d.name], 0);
-  const roundedTotal = Math.round(total * 10) / 10;
+  // 摘要里的总分必须和评分环一致 —— 用同一个算法算, 不要各算各的
+  const { total: roundedTotal } = computeTotal(dims, input.weights);
   const rec = recommend(roundedTotal);
 
   const fitDim = dims.find((d) => d.name === 'fit');

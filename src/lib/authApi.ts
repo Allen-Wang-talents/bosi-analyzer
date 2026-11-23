@@ -34,7 +34,9 @@ async function post<T>(payload: Record<string, unknown>): Promise<T> {
   }
 
   if (!res.ok || !data?.ok) {
-    throw new Error(data?.error ?? `账号服务返回 HTTP ${res.status}`);
+    const err = new Error(data?.error ?? `账号服务返回 HTTP ${res.status}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return data as T;
 }

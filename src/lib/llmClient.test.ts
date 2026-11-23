@@ -193,3 +193,34 @@ describe('LLM 路径回归 (2026-08-21): 本地 workHistory 覆盖 LLM 错误输
     expect(result!.totalYears).toBe(CURRENT_YEAR - 2018);
   });
 });
+
+// =====================================================
+// 输出被 max_tokens 截断 —— JSON 是残的
+// =====================================================
+// 以前 max_tokens 卡在 2000, 一份正常简历的 Candidate JSON 就超了,
+// 模型输出到一半被掐断 → JSON.parse 直接失败 → 整段丢掉, 静默降级到本地规则,
+// 用户看到的还跟"解析完整"一模一样。
+describe('LLM 输出被截断时的降级处理', () => {
+  it('截断的 JSON 能修补出已完成的字段', () => {
+    const rawText = `
+工作经历
+2021.05 - 至今  美团  算法工程师
+`;
+    // 模型输出到 "skills" 数组中间就被掐断 —— 尾部没有闭合符号
+    const truncated = '{"name":"张三","totalYears":5,"currentCompany":"美团","currentTitle":"算法工程师",' +
+      '"education":[],"workHistory":[{"company":"美团","title":"算法工程师","startYear":2021,"endYear":null,' +
+      '"description":"负责推荐"}],"projects":[],"skills":["Pyt';
+
+    const result = parseCandidateFromLLM(truncated, rawText);
+
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('张三');
+    expect(result?.currentCompany).toBe('美团');
+    expect(result?.workHistory.map((w) => w.company)).toContain('美团');
+  });
+
+  it('截断得连一个完整键值对都没有时返回 null (交给本地规则)', () => {
+    const result = parseCandidateFromLLM('{"name":"张', '随便什么简历');
+    expect(result).toBeNull();
+  });
+});

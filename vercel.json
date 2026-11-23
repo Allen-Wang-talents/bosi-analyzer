@@ -11,6 +11,9 @@
     },
     "api/rank.ts": {
       "includeFiles": "{server,shared}/**/*.ts"
+    },
+    "api/health.ts": {
+      "includeFiles": "{server,shared}/**/*.ts"
     }
   },
   "rewrites": [

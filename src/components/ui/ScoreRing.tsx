@@ -2,6 +2,7 @@
 // 评分环 - 动画展示综合评分
 // =====================================================
 import { motion } from 'framer-motion';
+import { useId } from 'react';
 import { cn } from './Card';
 
 type ScoreRingProps = {
@@ -18,13 +19,17 @@ export function ScoreRing({ score, size = 160, strokeWidth = 12, showLabel = tru
   const safeScore = Math.max(0, Math.min(100, score));
   const offset = circumference - (safeScore / 100) * circumference;
 
+  // 页面上一旦出现两个评分环, 固定的 id 会让第二个环的渐变指向第一个的
+  // <defs> —— 颜色会串。用 useId 保证每个环的渐变 id 唯一。
+  const gradientId = `ringGradient-${useId()}`;
+
   const color = getScoreColor(safeScore);
 
   return (
     <div className={cn('relative inline-flex items-center justify-center', className)} style={{ width: size, height: size }}>
       <svg width={size} height={size} className="transform -rotate-90">
         <defs>
-          <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={color.start} />
             <stop offset="100%" stopColor={color.end} />
           </linearGradient>
@@ -42,7 +47,7 @@ export function ScoreRing({ score, size = 160, strokeWidth = 12, showLabel = tru
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="url(#ringGradient)"
+          stroke={`url(#${gradientId})`}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}

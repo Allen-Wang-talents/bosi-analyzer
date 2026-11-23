@@ -206,6 +206,18 @@ export function clearUserTokenCache(): void {
   cachedUser = null;
 }
 
+/**
+ * 一次请求开始时调用 —— 清掉上一轮的「刚刚刷新过」标记。
+ *
+ * 飞书的刷新令牌是一次性的, 全网只有一份。旧实例如果不带这个标记就写回,
+ * 会把自己手里那份(可能已经被别的实例换掉的)旧刷新令牌写回存储, 把新的盖掉 →
+ * 下次冷启动必然 "refresh token revoked", 岗位池彻底拉不到数据。
+ * 所以只有「本次请求真的刷新出了新令牌」才允许写回。
+ */
+export function beginTokenRequest(): void {
+  if (cachedUser) cachedUser.refreshed = false;
+}
+
 type RawItem = Record<string, unknown>;
 
 /** 通道 A: bitable v1, 一次一页, 用 page_token 翻页 */

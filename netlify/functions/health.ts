@@ -1,6 +1,8 @@
 // =====================================================
 // Netlify Function - 健康检查
 // =====================================================
+import { DEFAULT_MODEL } from '../../server/minimax.ts';
+
 export default function handler(req: Request): Response {
   if (req.method === 'OPTIONS') {
     return new Response(null, {
@@ -16,7 +18,7 @@ export default function handler(req: Request): Response {
   return new Response(
     JSON.stringify({
       serverKeyConfigured: Boolean(process.env.MINIMAX_API_KEY),
-      model: 'MiniMax-M3',
+      model: DEFAULT_MODEL,
       timestamp: new Date().toISOString(),
     }),
     {

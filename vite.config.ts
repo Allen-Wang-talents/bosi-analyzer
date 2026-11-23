@@ -133,9 +133,19 @@ function devJobsApi(env: Record<string, string>): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // 第三参传 '' —— FEISHU_APP_ID 不带 VITE_ 前缀, 默认前缀会把它过滤掉
   const env = loadEnv(mode, process.cwd(), '')
+
+  // 开发服务器要把 .env 灌进 process.env ——
+  // api/*.ts 的 handler 读的是 process.env, 而 loadEnv 只是把值返回给你,
+  // 不会自己写进去。不灌的话, 本地 `npm run dev` 时 AI 全线报
+  // 「服务端未配置 MINIMAX_API_KEY」, 但线上是好的, 很容易误判成代码坏了。
+  if (command === 'serve') {
+    for (const [k, v] of Object.entries(env)) {
+      if (process.env[k] === undefined) process.env[k] = v;
+    }
+  }
 
   return {
     plugins: [

@@ -11,6 +11,9 @@ export const config = { timeout: 60 };
 
 const checkRateLimit = createRateLimiter(60_000, 10);
 
+// 请求体上限 512KB
+const MAX_BODY_BYTES = 512 * 1024;
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -46,6 +49,13 @@ export default async function handler(req: Request): Promise<Response> {
       200,
       rateHeaders,
     );
+  }
+
+  // 请求体上限 512KB —— 正常请求只有几十 KB, 不设上限的话
+  // 几个 MB 的 body 就能把函数内存和解析时间吃光
+  const contentLength = Number(req.headers.get('content-length') ?? 0);
+  if (contentLength > MAX_BODY_BYTES) {
+    return json({ error: '请求体太大' }, 413, rateHeaders);
   }
 
   const body = (await req.json().catch(() => ({}))) as {

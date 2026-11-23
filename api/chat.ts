@@ -4,7 +4,13 @@
 // =====================================================
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const MAX_TOKENS_LIMIT = 2000;
+// 简历解析要走大模型, 给足时间 —— 缺这一句会用平台默认(10 秒)掐断
+// 这是 chat 唯一漏配的一个函数 (jobs/rank/auth 都是 60)
+export const config = { maxDuration: 60 };
+
+// 简历解析要吐一整份 Candidate JSON —— 2000 token 根本不够(带 5 段工作经历
+// + 教育 + 项目就超了), 超了就静默截断 → JSON 解析失败 → 用户拿到的是本地规则的结果。
+const MAX_TOKENS_LIMIT = 8000;
 
 // 服务模块用动态载入 —— 万一文件没进部署包, 也只是报错, 不会整个函数 500
 let minimaxModule: Promise<typeof import('../server/minimax.ts')> | null = null;
@@ -50,7 +56,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // 限流
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+  // 限流键取 x-forwarded-for 的最后一段 —— 客户端能自己往前面塞一段,
+  // 取第一段等于限流可以随便绕过 (账单失控)
+  const xff = (req.headers['x-forwarded-for'] as string) ?? '';
+  const ip = xff.split(',').map(s => s.trim()).filter(Boolean).pop()
     || req.socket.remoteAddress
     || 'unknown';
   const rl = rateLimiter!(ip);
@@ -112,6 +121,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       content: result.content,
       usage: result.usage,
       model: result.model,
+      // 'length' = 模型输出被 max_tokens 掐断了 —— 前端据此提示用户结果可能不全
+      finishReason: result.finishReason,
     });
   } catch (err) {
     if (err instanceof minimax.UpstreamError) {

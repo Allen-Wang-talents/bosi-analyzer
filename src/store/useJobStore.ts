@@ -181,8 +181,10 @@ export const useJobStore = create<State & Actions>()(
 
         const reasons: Record<string, LlmReason> = {};
         const savedResults: SavedResult[] = [];
+        const aiScoreById: Record<string, number> = {};
         for (const item of items) {
           reasons[item.id] = { reason: item.reason, gaps: item.gaps, score: item.score };
+          aiScoreById[item.id] = item.score;
           const match = top.find((t) => t.job.id === item.id);
           savedResults.push({
             id: item.id,
@@ -194,11 +196,33 @@ export const useJobStore = create<State & Actions>()(
           });
         }
 
+        // AI 的评分要参与排序 —— 以前只把理由挂上去, 列表还是按本地分排,
+        // 模型说「这个 92 分那个 55 分」完全不起作用。
+        const reordered = [...top].sort((a, b) => {
+          const sa = aiScoreById[a.job.id] ?? a.score;
+          const sb = aiScoreById[b.job.id] ?? b.score;
+          if (sb !== sa) return sb - sa;
+          return b.score - a.score;
+        });
+
+        // 模型少返回了岗位 (reason/gaps 全空的那条会被服务端丢掉) →
+        // 不能还显示"复核完成", 否则用户以为每个岗位都有 AI 理由
+        const missing = top.length - items.length;
+        const partial = missing > 0;
+        if (partial) {
+          console.warn(`[jobs] AI 复核只返回了 ${items.length}/${top.length} 个岗位`);
+        }
+
         set({
-          llmStatus: degraded ? 'error' : 'done',
-          llmError: degraded ? error ?? 'AI 复核未完成' : null,
+          llmStatus: degraded || partial ? 'error' : 'done',
+          llmError: degraded
+            ? error ?? 'AI 复核未完成，下面显示的是本地规则排序。'
+            : partial
+              ? `AI 复核只完成了 ${items.length}/${top.length} 个岗位，其余按本地规则排序。`
+              : null,
           llmReasons: { ...get().llmReasons, ...reasons },
           savedResults,
+          topMatches: reordered,
         });
       },
 

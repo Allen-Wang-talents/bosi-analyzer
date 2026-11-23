@@ -25,7 +25,18 @@ export function JobListModule() {
   const jobsFetchedAt = useJobStore((s) => s.jobsFetchedAt);
 
   const visible = useMemo(() => {
-    let list = topMatches.length > 0 ? topMatches : matches.slice(0, 10);
+    const hasFilter =
+      filters.tracks.length > 0 ||
+      Boolean(filters.client) ||
+      filters.onlyComplete ||
+      filters.keyword.trim().length > 0;
+
+    // 有筛选条件时必须翻全量 matches ——
+    // 以前只在 topMatches(10 条) 或 matches 前 10 条里筛,
+    // 排在第 30 条的岗位, 搜关键词永远搜不到。
+    const source = hasFilter ? matches : topMatches.length > 0 ? topMatches : matches.slice(0, 10);
+    let list = [...source];
+
     if (filters.tracks.length > 0) {
       list = list.filter((m) => filters.tracks.includes(m.job.track));
     }
@@ -160,7 +171,7 @@ export function JobListModule() {
         {llmStatus === 'error' && (
           <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-status-yellow/10 border border-status-yellow/30">
             <p className="text-[11px] text-fg-muted leading-relaxed">
-              AI 复核未完成，下面显示的是本地规则排序。{llmError ? ` (${llmError})` : ''}
+              {llmError || 'AI 复核未完成，下面显示的是本地规则排序。'}
             </p>
             <Button size="sm" variant="ghost" onClick={() => rankTop()}>重试</Button>
           </div>

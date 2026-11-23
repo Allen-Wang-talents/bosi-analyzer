@@ -116,6 +116,9 @@ export function Button({
 
   return (
     <button
+      // 默认 type="button" —— 浏览器里 button 的默认 type 是 submit,
+      // 放在表单里点一下就会提交表单。显式传 type 才能覆盖这个默认值
+      type="button"
       className={cn(base, variants[variant], sizes[size], className)}
       disabled={disabled || loading}
       {...rest}

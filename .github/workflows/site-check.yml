@@ -8,6 +8,19 @@ on:
     - cron: '17 */6 * * *'
 
 jobs:
+  # 代码本身能不能过 —— 之前的检查只测线上站点, 代码写坏了照样部署成功。
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
   check:
     runs-on: ubuntu-latest
     strategy:
@@ -51,6 +64,12 @@ jobs:
           code=$(curl -s -o /tmp/health -w '%{http_code}' --max-time 25 "${{ matrix.base }}/api/health")
           echo "health -> HTTP $code"; cat /tmp/health; echo
           [ "$code" = "200" ] || { echo "::error::health 不通"; exit 1; }
+          # 服务端密钥没配 = 全站 AI 功能是死的, 但 health 照样 200 ——
+          # 只验状态码的话, 这个故障永远不会报警。
+          grep -q '"serverKeyConfigured":true' /tmp/health || {
+            echo "::error::服务端 MiniMax 密钥没配好 (serverKeyConfigured 不为 true)"
+            exit 1
+          }
 
       - name: 岗位池接口 (必须是 JSON, 不能被 SPA 兜底换成 HTML)
         run: |
@@ -61,15 +80,35 @@ jobs:
             echo "::error::/api/jobs 返回的不是 JSON —— SPA 兜底把 API 盖住了"
             exit 1
           }
+          # 返回 200 + JSON 但岗位是空的 = 岗位池已经拉不到了 (飞书没授权 /
+          # Blobs 凭证过期), 前端会显示一个空列表 —— 这时候必须报警。
+          count=$(jq -r '.count // 0' /tmp/jobs)
+          [ "$count" -gt 0 ] || {
+            echo "::error::岗位池是空的 (count=$count) —— 飞书授权或 Blobs 凭证出问题了"
+            exit 1
+          }
+          [ "$(jq -r '.degraded' /tmp/jobs)" = "false" ] || {
+            echo "::error::岗位池是降级状态 —— 有分表没读到: $(jq -r '.error // "?"' /tmp/jobs)"
+            exit 1
+          }
+          echo "岗位池 OK: $count 个岗位"
 
+      # M3 是推理模型, max_tokens 先被 reasoning_tokens 吃掉 ——
+      # 给 50 的话正文会是空的, 探针永远测不出真实故障。这里给 800。
       - name: 对话接口 (验证 MiniMax 中转 + 模块装载)
         run: |
           code=$(curl -s -o /tmp/chat -w '%{http_code}' --max-time 60 \
             -X POST -H 'Content-Type: application/json' \
-            -d '{"messages":[{"role":"user","content":"回复两个字：正常"}],"max_tokens":50}' \
+            -d '{"messages":[{"role":"user","content":"回复两个字：正常"}],"max_tokens":800}' \
             "${{ matrix.base }}/api/chat")
           echo "chat -> HTTP $code"; head -c 200 /tmp/chat; echo
           [ "$code" = "200" ] || { echo "::error::chat 不通"; exit 1; }
+          content=$(jq -r '.content // ""' /tmp/chat)
+          [ -n "$(printf '%s' "$content" | tr -d '[:space:]')" ] || {
+            echo "::error::chat 返回了空正文 (finishReason=$(jq -r '.finishReason // "?"' /tmp/chat))"
+            exit 1
+          }
+          echo "chat OK: $content"
 
       - name: 精排接口 (发一条假岗位, 验证模块装载 + 上游连通)
         run: |
@@ -83,6 +122,13 @@ jobs:
             echo "::error::/api/rank 返回的不是 JSON"
             exit 1
           }
+          # 精排返回 200 但 results 是空的 = 模型没跑出来, 推荐理由整片缺失
+          n=$(jq -r '(.results // []) | length' /tmp/rank)
+          [ "$n" -gt 0 ] || {
+            echo "::error::精排没返回任何结果 (degraded=$(jq -r '.degraded' /tmp/rank), error=$(jq -r '.error // "?"' /tmp/rank))"
+            exit 1
+          }
+          echo "rank OK: $n 条结论"
 
       # 账号接口: 只验「能通 + 是 JSON + 公司名称必填」, 不真注册 ——
       # 真注册会往线上库里留一条脏数据。
@@ -99,5 +145,23 @@ jobs:
           }
           grep -q '公司' /tmp/auth || {
             echo "::error::/api/auth 没做公司名称必填校验"
+            exit 1
+          }
+
+      # 上面那条缺公司名的请求会被参数校验拦下, 根本碰不到存储 ——
+      # 所以再单独探一次存储凭证, 否则「密钥没配好」这种故障永远测不出来。
+      - name: 账号存储凭证 (ping)
+        run: |
+          code=$(curl -s -o /tmp/ping -w '%{http_code}' --max-time 25 \
+            -X POST -H 'Content-Type: application/json' \
+            -d '{"action":"ping"}' \
+            "${{ matrix.base }}/api/auth")
+          echo "ping -> HTTP $code"; head -c 200 /tmp/ping; echo
+          [ "$code" = "200" ] || {
+            echo "::error::账号存储不通 —— Blobs 凭证可能没配好或已失效"
+            exit 1
+          }
+          grep -q '"storage":"ready"' /tmp/ping || {
+            echo "::error::ping 没返回 storage ready"
             exit 1
           }

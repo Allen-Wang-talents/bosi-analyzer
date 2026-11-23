@@ -8,7 +8,8 @@ import type { Candidate } from '@/types';
 export function inferBirthYearFromYears(totalYears: number, now = new Date()): number | null {
   if (!totalYears || totalYears < 0) return null;
   const careerStartYear = now.getFullYear() - totalYears;
-  return careerStartYear - 22;
+  // totalYears 是小数时会算出小数年份 —— 年龄不能是 26.5 岁
+  return Math.floor(careerStartYear - 22);
 }
 
 // 从最高学历入学年反推 (本科 18 岁入学，硕士 22，博士 26)
@@ -24,14 +25,35 @@ export function inferBirthYearFromEducation(edu: Candidate['education']): number
   return top.startYear - enrollAge;
 }
 
+/**
+ * 年龄 + 是不是「确切值」。
+ *
+ * exact=true 只有一种情况: 简历里直接写了出生年。
+ * 其它都是按「22 岁起工作」/「18 岁上大学」反推的, 误差有好几岁 ——
+ * 用这种推算值去判「30 岁以内」这种硬约束会误杀真人 (超 1 岁就扣 18 分),
+ * 所以调用方要区分对待。
+ */
+export function estimateAgeWithConfidence(
+  candidate: Candidate,
+  now = new Date(),
+): { age: number | null; exact: boolean } {
+  const currentYear = now.getFullYear();
+  const declared = candidate.birthYear ?? null;
+
+  if (declared) {
+    if (declared < 1940 || declared > currentYear) return { age: null, exact: false };
+    return { age: currentYear - declared, exact: true };
+  }
+
+  const birthYear =
+    inferBirthYearFromEducation(candidate.education) ??
+    inferBirthYearFromYears(candidate.totalYears, now);
+  if (birthYear === null) return { age: null, exact: false };
+  if (birthYear < 1940 || birthYear > currentYear) return { age: null, exact: false };
+  return { age: currentYear - birthYear, exact: false };
+}
+
 /** 候选人年龄 (取不到返回 null) */
 export function estimateAge(candidate: Candidate, now = new Date()): number | null {
-  const currentYear = now.getFullYear();
-  let birthYear: number | null = candidate.birthYear ?? null;
-
-  if (!birthYear) birthYear = inferBirthYearFromEducation(candidate.education);
-  if (!birthYear) birthYear = inferBirthYearFromYears(candidate.totalYears, now);
-
-  if (birthYear !== null && (birthYear < 1940 || birthYear > currentYear)) return null;
-  return birthYear === null ? null : currentYear - birthYear;
+  return estimateAgeWithConfidence(candidate, now).age;
 }

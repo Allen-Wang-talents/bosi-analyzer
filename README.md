@@ -120,6 +120,15 @@ JSON 格式：
 4. **上传简历**（Module 4）：拖入 PDF/DOCX/TXT，浏览器本地解析
 5. **匹配度分析**（Module 5）：查看综合评分 + 5 维度详情 + AI 问答
 
+## 账号与登录
+
+上传简历前必须登录，首次使用要注册：**手机号或邮箱 + 密码（≥6 位）+ 所在公司名称**（公司必填）。
+注册完自动登录，之后关掉页面再打开还是登录态（存在 localStorage 的 `bosi:auth:v1`）。
+
+- 账号数据存在 Netlify Blobs 的 `bosi-users` store 里，密码用 **scrypt + 随机盐**哈希，不存明文
+- Vercel 那边没配 Blobs 凭证，所以 `/api/auth` 只是把请求转发给国内镜像站（跟 `/api/jobs` 一个套路）
+- 登录态只是「能不能上传简历」的门槛，**简历本身不上传服务器** —— 解析仍在浏览器本地跑
+
 ## 深度评鉴的评分逻辑（5 维度）
 
 | 维度 | 默认权重 | 评分依据 |
@@ -183,6 +192,9 @@ npm --cache /tmp/npmcache i --prefix /tmp/netlify-tool netlify-cli
 export PATH="/tmp/netlify-tool/node_modules/.bin:$PATH"
 
 cd ~/Allen\ claude\ code/resume-analyzer
+
+# --no-build = 不跑构建，所以 dist/ 必须是刚构建出来的
+npm run build
 netlify deploy --prod --no-build --dir=dist --functions=netlify/functions
 ```
 
@@ -207,20 +219,21 @@ Netlify 环境变量：
 | `FEISHU_APP_ID` | 飞书应用 App ID（换用户令牌用） | 20 |
 | `FEISHU_APP_SECRET` | 飞书应用 App Secret | 32 |
 | `MINIMAX_API_KEY` | MiniMax API Key（AI 解析 / 对话 / 精排） | 125 |
-| `NETLIFY_BLOBS_TOKEN` | Netlify 个人令牌，函数读写 Blobs 里的飞书令牌用 | 40 |
+| `NETLIFY_BLOBS_TOKEN` | Netlify 个人令牌，函数读写 Blobs 里的飞书令牌 / 账号数据用 | 40 |
+| `SITE_ID` | Netlify 站点 ID（也可用 `NETLIFY_SITE_ID`），拼 Blobs 路径用 | 32 |
+| `AUTH_BLOB_STORE` | 账号数据所在的 Blobs store 名，默认 `bosi-users` | 10 |
 
 令牌在 Blobs 里的位置：`bosi-secrets` / `feishu-user-token`。
+账号数据在 Blobs 里的位置：`bosi-users`。
 
 ## 安全说明
 
-- MiniMax M3 API Key 存在浏览器 localStorage，明文保存
+- **MiniMax Key 只存在服务端**（`MINIMAX_API_KEY` 环境变量），前端拿不到。用户在自己的设置里填 Key 属于可选覆盖，那种情况 Key 存在浏览器 localStorage
 - **简历解析在客户端完成**，但 AI 解析 / 精排会把简历要点发给后端 → MiniMax。发给 LLM 的是**结构化简报**，不含 rawText、联系方式、生日
-- **岗位的合同点位 / 预计收费永远不发给 LLM**
+- **岗位的合同点位 / 预计收费 / 薪资带宽 / 客户层级永远不发给 LLM**
 - 岗位池快照不进 git，也不进 `dist/`
-- **生产部署风险**：因 API Key 在前端调用，任何人都能看到并使用你的 Key 额度。建议：
-  - 增加后端代理 MiniMax M3 API
-  - 在 Vercel 设置访问密码（Pro 计划）
-  - 或在 API 控制台限制 Key 来源 IP
+- 上传简历必须先登录（手机号 / 邮箱 + 密码 + 所在公司），账号密码用 scrypt 加盐哈希存在 Netlify Blobs 的 `bosi-users` 里
+- API 按 IP 限流（对话 30 次/分钟，精排 10 次/分钟），请求体上限 512KB
 
 ## 项目结构
 

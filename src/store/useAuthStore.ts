@@ -54,10 +54,15 @@ export const useAuthStore = create<AuthState>()(
         set({ checking: true });
         try {
           const { user } = await fetchMe(token);
-          set({ user, token });
-        } catch {
-          // token 过期或被清了 → 当没登录
-          set({ user: null, token: null });
+          // 期间用户可能已经重新登录换了 token → 这次的结果作废
+          if (get().token === token) set({ user, token });
+        } catch (err) {
+          // 只有服务端明确说「登录失效」才清 token ——
+          // 网络抖动、服务端临时不可用都不该把人踢下线。
+          const status = (err as { status?: number }).status;
+          if (status === 401 && get().token === token) {
+            set({ user: null, token: null });
+          }
         } finally {
           set({ checking: false });
         }

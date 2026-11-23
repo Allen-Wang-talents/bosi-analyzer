@@ -209,6 +209,50 @@ export function isProductName(name: string): boolean {
   return false;
 }
 
+// =====================================================
+// 子串匹配产品名 —— 拉丁字母键必须落在词边界上
+// =====================================================
+//
+// 纯中文键 (字节跳动/蚂蚁/高德...) 用子串匹配基本安全: 就算误伤, 也是
+// 匹配到同一个母公司的另一个写法。
+//
+// 但纯拉丁键用子串匹配会误伤得很离谱 ——
+//   'EDUCATION'  里有 'UC'
+//   'SUCCESS Corp' 里也有 'UC'
+//   'UC Berkeley' 里的 UC 是学校, 不是阿里系产品
+// 全都会被解析成「阿里巴巴」, 雇主直接认错。
+//
+// 规则: 拉丁键必须落在词边界 (前后不能是字母/数字) 上, 且后面不能再跟一个
+// 大写开头的英文单词 —— 那多半是另一个专有名词 ('UC Berkeley')。
+// 中文键保持原来的子串匹配, 靠"长键优先"消歧 (今日头条 优先于 头条)。
+const ASCII_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 .&+'-]*$/;
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 文本里是否命中该产品名 —— 返回 true 表示可以作为母公司线索 */
+function matchesProductKey(text: string, product: string): boolean {
+  if (!ASCII_KEY_RE.test(product)) return text.includes(product);
+
+  const re = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(product)}(?![A-Za-z0-9])`);
+  const m = re.exec(text);
+  if (!m) return false;
+  // 后面紧跟 " 大写开头的英文单词" → 多半是另一个专有名词 ('UC Berkeley')
+  const after = text.slice(m.index + m[0].length);
+  if (/^\s+[A-Z][a-zA-Z]/.test(after)) return false;
+  return true;
+}
+
+/** 在文本里找出命中的产品名对应的母公司 (长键优先) */
+function matchCompanyByProduct(text: string): string | null {
+  const sortedProducts = Object.keys(PRODUCT_TO_COMPANY_MAP).sort((a, b) => b.length - a.length);
+  for (const product of sortedProducts) {
+    if (matchesProductKey(text, product)) return PRODUCT_TO_COMPANY_MAP[product];
+  }
+  return null;
+}
+
 // 公司名解析：把候选名解析为真正的公司名
 // 返回: 字符串 (替换或原值) / null (识别不出，应跳过候选)
 //
@@ -235,12 +279,8 @@ export function resolveCompanyName(name: string): string | null {
   }
 
   // 2) 包含产品名 → 优先匹配长产品名（处理 "字节跳动 - 抖音电商"）
-  const sortedProducts = Object.keys(PRODUCT_TO_COMPANY_MAP).sort((a, b) => b.length - a.length);
-  for (const product of sortedProducts) {
-    if (cleaned.includes(product)) {
-      return PRODUCT_TO_COMPANY_MAP[product];
-    }
-  }
+  const byProduct = matchCompanyByProduct(cleaned);
+  if (byProduct) return byProduct;
 
   // 3) 多分隔符场景: 按 `|` `-` `—` 切, 选最长的母公司
   const segments = cleaned.split(/[|｜\-—–\/、]/).map(s => s.trim()).filter(Boolean);
@@ -278,12 +318,8 @@ function resolveCompanyNameSingle(name: string): string | null {
     return PRODUCT_TO_COMPANY_MAP[cleaned];
   }
 
-  const sortedProducts = Object.keys(PRODUCT_TO_COMPANY_MAP).sort((a, b) => b.length - a.length);
-  for (const product of sortedProducts) {
-    if (cleaned.includes(product)) {
-      return PRODUCT_TO_COMPANY_MAP[product];
-    }
-  }
+  const byProduct = matchCompanyByProduct(cleaned);
+  if (byProduct) return byProduct;
 
   if (isProductName(cleaned)) {
     return null;

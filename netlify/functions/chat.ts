@@ -11,7 +11,12 @@ import {
   DEFAULT_MODEL,
 } from '../../server/minimax.ts';
 
-const MAX_TOKENS_LIMIT = 2000;
+// 跟 jobs/rank 对齐, 别用平台默认的 10 秒
+export const config = { timeout: 60 };
+
+// 简历解析要吐一整份 Candidate JSON —— 2000 token 根本不够(带 5 段工作经历
+// + 教育 + 项目就超了), 超了就静默截断 → JSON 解析失败 → 用户拿到的是本地规则的结果。
+const MAX_TOKENS_LIMIT = 8000;
 
 const checkRateLimit = createRateLimiter(60_000, 30);
 
@@ -89,7 +94,11 @@ export default async function handler(req: Request): Promise<Response> {
       temperature,
       model: body.model || DEFAULT_MODEL,
     });
-    return json({ content: result.content, usage: result.usage, model: result.model }, 200, rateHeaders);
+    return json(
+      { content: result.content, usage: result.usage, model: result.model, finishReason: result.finishReason },
+      200,
+      rateHeaders,
+    );
   } catch (err) {
     if (err instanceof UpstreamError) {
       console.error(`[chat] MiniMax 上游错误 ${err.status}:`, err.message);

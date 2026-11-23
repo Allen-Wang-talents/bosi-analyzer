@@ -22,6 +22,28 @@ export function SettingsModal({ open, onClose }: Props) {
   const importTierConfig = useAnalysisStore((s) => s.importTierConfig);
   const exportTierConfig = useAnalysisStore((s) => s.exportTierConfig);
 
+  // 每次打开弹窗换一个 session 号 —— 用来把各 Tab 的本地状态重置,
+  // 否则上次没保存的输入会一直留在框里, 看着像已经存上了
+  const [session, setSession] = useState(0);
+  useEffect(() => {
+    if (open) setSession((s) => s + 1);
+  }, [open]);
+
+  // 弹窗打开时锁住页面滚动 + Esc 关闭
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, onClose]);
+
   return (
     <>
       <div
@@ -38,10 +60,13 @@ export function SettingsModal({ open, onClose }: Props) {
         )}
       >
         <div
+          aria-hidden={!open}
           className={cn(
             'w-full max-w-2xl max-h-[90vh] bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col',
-            'transform transition-all duration-300 pointer-events-auto',
-            open ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
+            'transform transition-all duration-300',
+            // 关着的时候不能吃点击 —— 否则页面中间一大块看不见的面板
+            // 会把用户的点击全吞掉
+            open ? 'opacity-100 scale-100 pointer-events-auto' : 'opacity-0 scale-95 pointer-events-none'
           )}
           onClick={(e) => e.stopPropagation()}
         >
@@ -66,8 +91,8 @@ export function SettingsModal({ open, onClose }: Props) {
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto p-6">
-            {tab === 'api' && <ApiKeyTab settings={settings} updateSettings={updateSettings} />}
-            {tab === 'weights' && <WeightsTab settings={settings} updateSettings={updateSettings} />}
+            {tab === 'api' && <ApiKeyTab key={`api-${session}`} settings={settings} updateSettings={updateSettings} />}
+            {tab === 'weights' && <WeightsTab key={`weights-${session}`} settings={settings} updateSettings={updateSettings} />}
             {tab === 'tiers' && <TiersTab settings={settings} updateSettings={updateSettings} />}
             {tab === 'data' && <DataTab exportTierConfig={exportTierConfig} importTierConfig={importTierConfig} />}
           </div>
@@ -106,6 +131,12 @@ function ApiKeyTab({ settings, updateSettings }: { settings: any; updateSettings
   const checkServerStatus = useAnalysisStore((s) => s.checkServerStatus);
   const setApiKeyStatus = useAnalysisStore((s) => s.setApiKeyStatus);
   const [recheckLoading, setRecheckLoading] = useState(false);
+
+  // store 里的 Key 变了 (别的页面改了设置 / 清空了), 输入框要跟着变 ——
+  // 不然框里显示的是旧值, 用户以为还在用
+  useEffect(() => {
+    setKey(settings.anthropicApiKey ?? '');
+  }, [settings.anthropicApiKey]);
 
   const handleSave = () => {
     updateSettings({ anthropicApiKey: key.trim() });
@@ -254,6 +285,11 @@ function ApiKeyTab({ settings, updateSettings }: { settings: any; updateSettings
 // =====================================================
 function WeightsTab({ settings, updateSettings }: { settings: any; updateSettings: any }) {
   const [w, setW] = useState({ ...settings.weights });
+
+  // 权重在别处被改了 (导入了 tier 配置等), 这里的滑块要跟着刷新
+  useEffect(() => {
+    setW({ ...settings.weights });
+  }, [settings.weights]);
 
   const total = w.education + w.company + w.projects + w.fit + (w.age ?? 0);
 

@@ -8,7 +8,7 @@ import { fetchAllJobs } from './feishu.ts';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-let cache: { jobs: JobPosition[]; fetchedAt: number } | null = null;
+let cache: { jobs: JobPosition[]; fetchedAt: number; failedTables: string[] } | null = null;
 
 export type JobsPayload = {
   jobs: JobPosition[];
@@ -29,12 +29,17 @@ export async function getJobsPayload(opts: {
   const { appId, appSecret, userAccessToken, userRefreshToken, force } = opts;
 
   if (!force && cache && Date.now() - cache.fetchedAt < CACHE_TTL_MS) {
+    // 部分分表失败的结果也要如实标 degraded —— 缓存命中时当成"全量成功"返回,
+    // 等于把故障藏了 5 分钟, 前端也不会提示岗位库缺了几张表的数据。
     return {
       jobs: cache.jobs,
       fetchedAt: cache.fetchedAt,
       source: 'live',
       count: cache.jobs.length,
-      degraded: false,
+      degraded: cache.failedTables.length > 0,
+      ...(cache.failedTables.length > 0
+        ? { error: `以下分表读取失败: ${cache.failedTables.join('、')}` }
+        : {}),
     };
   }
 
@@ -57,7 +62,7 @@ export async function getJobsPayload(opts: {
       userAccessToken,
       userRefreshToken,
     });
-    cache = { jobs, fetchedAt: Date.now() };
+    cache = { jobs, fetchedAt: Date.now(), failedTables };
     return {
       jobs,
       fetchedAt: cache.fetchedAt,

@@ -43,7 +43,13 @@ async function fromMirror(force: boolean): Promise<unknown | null> {
     return mirrorCache.payload;
   }
   try {
-    const res = await fetch(`${MIRROR_URL}/api/jobs`, { headers: { Accept: 'application/json' } });
+    // force 要透传给镜像站 —— 不然只清了自己这份 5 分钟缓存,
+    // 镜像站照旧返回旧数据, 前端「刷新岗位池」永远拿不到新的
+    const url = force ? `${MIRROR_URL}/api/jobs?refresh=1` : `${MIRROR_URL}/api/jobs`;
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(25_000),
+    });
     if (!res.ok) return null;
     const payload = await res.json();
     const jobs = (payload as { jobs?: unknown[] } | null)?.jobs;

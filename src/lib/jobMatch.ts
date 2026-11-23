@@ -19,7 +19,7 @@ import type { JobPosition, JobTrack } from '../../shared/jobs.ts';
 import { keywordGroupsFor, trackKeywordsFor } from '../data/jobKeywords.ts';
 import { DEFAULT_COMPANY_TIERS } from '../data/tierTemplate.ts';
 import { titleLevel, levelMatchByTier } from './titleLevel.ts';
-import { estimateAge } from './ageUtil.ts';
+import { estimateAgeWithConfidence } from './ageUtil.ts';
 import { extractConstraints, mergeConstraints, type JobConstraints } from './jobText.ts';
 import {
   buildTfidfIndex,
@@ -325,6 +325,8 @@ export type MatchContext = {
   years: number;
   /** 候选人年龄 (取不到 null) */
   age: number | null;
+  /** 年龄是不是确切值 —— 推算出来的年龄不能当硬约束用 */
+  ageExact: boolean;
   /** 候选人最高学历 */
   degree: '博士' | '硕士' | '本科' | '专科' | '其他' | null;
   /** 候选人大厂背景 */
@@ -419,6 +421,7 @@ export function buildContext(candidate: Candidate, jobs: JobPosition[]): MatchCo
   }
 
   const companies = candidateCompanies(candidate);
+  const ageInfo = estimateAgeWithConfidence(candidate);
 
   return {
     candidate,
@@ -431,7 +434,8 @@ export function buildContext(candidate: Candidate, jobs: JobPosition[]): MatchCo
     jobCount: jobs.length,
     affinities: trackAffinities(candidate),
     years: candidateYears(candidate),
-    age: estimateAge(candidate),
+    age: ageInfo.age,
+    ageExact: ageInfo.exact,
     degree: highestDegree(candidate),
     bigTech: matchBigTech(companies),
     companies,
@@ -507,10 +511,20 @@ function scoreProfile(
 
   // 年龄
   if (constraints.maxAge !== null && ctx.age !== null) {
-    const ok = ctx.age <= constraints.maxAge;
-    const v = ok ? 100 : Math.max(0, 100 - (ctx.age - constraints.maxAge) * 18);
-    parts.push({ w: 0.28, v, label: `年龄 ${ctx.age} vs 上限 ${constraints.maxAge}` });
-    (ok ? matched : missed).push(`年龄≤${constraints.maxAge}`);
+    const over = ctx.age - constraints.maxAge;
+    if (ctx.ageExact) {
+      // 简历里直接写了出生年 —— 年龄是准的, 可以当硬约束判
+      const ok = over <= 0;
+      const v = ok ? 100 : Math.max(0, 100 - over * 18);
+      parts.push({ w: 0.28, v, label: `年龄 ${ctx.age} vs 上限 ${constraints.maxAge}` });
+      (ok ? matched : missed).push(`年龄≤${constraints.maxAge}`);
+    } else {
+      // 推算的年龄 (按"22 岁起工作"反推), 误差有好几岁 ——
+      // 拿它去判「30 岁以内」这种硬约束会误杀真人 (超 1 岁就扣 18 分)。
+      // 所以只当弱信号, 不进 matched/missed。
+      const v = over <= 0 ? 100 : Math.max(50, 100 - over * 6);
+      parts.push({ w: 0.1, v, label: `年龄(推算) ${ctx.age} vs 上限 ${constraints.maxAge}` });
+    }
   }
 
   // 学历

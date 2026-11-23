@@ -11,7 +11,7 @@
 // 直接打 Blobs 的 REST 接口读写是通的, 所以这里手写 fetch。
 // =====================================================
 import { getJobsPayload } from '../../server/jobsService.ts';
-import { getUserTokenSnapshot, clearUserTokenCache } from '../../server/feishu.ts';
+import { getUserTokenSnapshot, clearUserTokenCache, beginTokenRequest } from '../../server/feishu.ts';
 
 // 拉飞书最多允许跑 60 秒 —— 默认的 10 秒上限不够 8 张表分页读完
 export const config = { timeout: 60 };
@@ -40,6 +40,7 @@ async function readTokens(): Promise<StoredTokens | null> {
   try {
     const res = await fetch(blobUrl(TOKEN_KEY), {
       headers: { Authorization: `Bearer ${process.env.NETLIFY_BLOBS_TOKEN}` },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
     return (await res.json()) as StoredTokens;
@@ -48,18 +49,27 @@ async function readTokens(): Promise<StoredTokens | null> {
   }
 }
 
-async function writeTokens(data: StoredTokens): Promise<void> {
+async function writeTokens(data: StoredTokens): Promise<boolean> {
   try {
-    await fetch(blobUrl(TOKEN_KEY), {
+    const res = await fetch(blobUrl(TOKEN_KEY), {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${process.env.NETLIFY_BLOBS_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ ...data, savedAt: Date.now() }),
+      signal: AbortSignal.timeout(15_000),
     });
+    // 不看 res.ok 的话, 写失败会被静默吞掉 —— 刚刷出来的刷新令牌直接丢了,
+    // 下次冷启动只能人工重新授权, 而日志里什么都看不出来
+    if (!res.ok) {
+      console.error(`[jobs] 令牌写回 Blobs 失败: HTTP ${res.status}`);
+      return false;
+    }
+    return true;
   } catch (err) {
     console.error('[jobs] 令牌写回 Blobs 失败:', err);
+    return false;
   }
 }
 
@@ -75,6 +85,10 @@ export default async function handler(req: Request): Promise<Response> {
   const force = new URL(req.url).searchParams.get('refresh') === '1';
   let stored = await readTokens();
 
+  // 本次请求开始前先清掉「上一轮刷新过」的标记 ——
+  // 只有这次请求真的刷出了新令牌, 才允许写回存储。
+  beginTokenRequest();
+
   const load = (s: StoredTokens | null) =>
     getJobsPayload({
       appId: process.env.FEISHU_APP_ID,
@@ -83,6 +97,21 @@ export default async function handler(req: Request): Promise<Response> {
       userRefreshToken: s?.refreshToken ?? process.env.FEISHU_USER_REFRESH_TOKEN,
       force,
     });
+
+  // 只在「本次请求刚刚刷新出新令牌」时才写回 —— 飞书的刷新令牌是一次性的,
+  // 不存就等于没刷新; 反过来拿旧令牌写回会把新的盖掉, 所以必须以 refreshed 为准。
+  //
+  // 关键: 这个写回必须发生在「任何」返回之前。拉表失败的时候, 令牌可能
+  // 已经刷过了 —— 这时候直接 return, 新令牌就丢了, 下次冷启动拿着一个
+  // 已经被用掉的刷新令牌, 岗位池就彻底拉不到数据了。
+  const persistRefreshedToken = async () => {
+    const snapshot = getUserTokenSnapshot();
+    if (!snapshot.refreshed || !snapshot.accessToken || !snapshot.refreshToken) return;
+    await writeTokens({
+      accessToken: snapshot.accessToken,
+      refreshToken: snapshot.refreshToken,
+    });
+  };
 
   let payload;
   try {
@@ -94,24 +123,40 @@ export default async function handler(req: Request): Promise<Response> {
     if (fresh?.accessToken && fresh.accessToken !== stored?.accessToken) {
       console.warn('[jobs] 缓存令牌失效, 用存储里的新令牌重试');
       stored = fresh;
-      payload = await load(fresh);
+      try {
+        payload = await load(fresh);
+      } catch (retryErr) {
+        console.error('[jobs] 换令牌重试仍然失败:', retryErr);
+        await persistRefreshedToken();
+        return degraded(retryErr);
+      }
     } else {
-      throw err;
+      // 兜底也要返回 degraded, 不能直接 500 —— 前端要靠这个字段降级显示
+      console.error('[jobs] 拉取岗位失败:', err);
+      await persistRefreshedToken();
+      return degraded(err);
     }
   }
 
-  // 只在「刚刚刷新出新令牌」时才写回 —— 飞书的刷新令牌是一次性的, 不存就等于没刷新。
-  // 反过来, 拿旧令牌写回会把新的盖掉, 所以必须以 refreshed 为准, 不能比字符串。
-  const snapshot = getUserTokenSnapshot();
-  if (snapshot.refreshed && snapshot.accessToken && snapshot.refreshToken) {
-    await writeTokens({
-      accessToken: snapshot.accessToken,
-      refreshToken: snapshot.refreshToken,
-    });
-  }
+  await persistRefreshedToken();
 
   return new Response(JSON.stringify(payload), {
     status: 200,
     headers: { 'Content-Type': 'application/json', ...CORS },
   });
+}
+
+/** 降级响应 —— HTTP 200 + degraded:true, 前端据此显示提示而不是白屏 */
+function degraded(err: unknown): Response {
+  return new Response(
+    JSON.stringify({
+      jobs: [],
+      fetchedAt: Date.now(),
+      source: 'fallback',
+      count: 0,
+      degraded: true,
+      error: err instanceof Error ? err.message : String(err),
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json', ...CORS } },
+  );
 }

@@ -13,6 +13,9 @@ import type { CandidateBrief, JobBrief } from '../server/rankService.ts';
 // 精排要跑大模型 + 可能拆两轮, 10 秒的默认上限不够
 export const config = { maxDuration: 60 };
 
+// 请求体上限 512KB —— 正常请求只有几十 KB
+const MAX_BODY_BYTES = 512 * 1024;
+
 // 服务模块用动态载入 —— 万一文件没进部署包, 也只是降级, 不会整个函数 500
 let serviceModule: Promise<typeof import('../server/rankService.ts')> | null = null;
 let minimaxModule: Promise<typeof import('../server/minimax.ts')> | null = null;
@@ -53,7 +56,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+  // 限流键取 x-forwarded-for 的最后一段 —— 客户端能自己往前面塞一段,
+  // 取第一段等于限流可以随便绕过 (账单失控)
+  const xff = (req.headers['x-forwarded-for'] as string) ?? '';
+  const ip = xff.split(',').map(s => s.trim()).filter(Boolean).pop()
     || req.socket.remoteAddress
     || 'unknown';
 
@@ -78,6 +84,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       degraded: true,
       error: '服务端未配置 MINIMAX_API_KEY, 只返回本地排序结果。',
     });
+  }
+
+  // 请求体上限 —— 精排只需要候选人简介 + 10 个岗位, 正常请求也就几十 KB。
+  // 不设上限的话, 一个几 MB 的 body 就能把函数内存和解析时间吃光。
+  const contentLength = Number(req.headers['content-length'] ?? 0);
+  if (contentLength > MAX_BODY_BYTES) {
+    return res.status(413).json({ error: '请求体太大' });
   }
 
   const body = (req.body || {}) as { candidate?: CandidateBrief; jobs?: JobBrief[] };

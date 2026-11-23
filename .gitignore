@@ -13,6 +13,15 @@ dist-ssr
 *.local
 .npm-cache
 
+# 环境变量文件 —— 可能含 MiniMax / 飞书 / Blobs 凭证, 一律不进仓库
+# .env.example 是模板, 要留在仓库里
+.env
+.env.*
+!.env.example
+
+# Vercel CLI 本地状态
+.vercel
+
 # 岗位池快照 —— 含客户真名/薪资/点位等保密数据, 不进仓库
 # 也不能放 public/ —— vite 会把它拷进 dist/ 跟着部署上线, 等于公开了客户名单
 data/jobs.snapshot.json

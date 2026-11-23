@@ -5,6 +5,7 @@
 import type { ScoreResult, Company, JD, JobProfile, Candidate } from '@/types';
 import { serializeForLLM } from './formatReport';
 import { resolveCompanyName } from '@/data/productCompanyMap';
+import { SCHOOL_ALIAS_INDEX } from '@/data/schoolLibrary';
 import { extractTotalYears, parseResumeText } from './parseResume';
 
 const SYSTEM_PROMPT = `你是博思AI人才推荐网的 AI 助手，服务于资深猎头顾问。你将收到一份结构化的候选人匹配分析数据，包括公司信息、岗位 JD、岗位画像、候选人简历解析、以及 4 个维度的评分与依据。
@@ -258,6 +259,9 @@ export async function validateApiKey(key: string): Promise<boolean> {
 
 // 单条输入上限，避免超长简历撑爆 token
 const RESUME_TEXT_LIMIT = 8000;
+// 简历解析的输出预算 —— 一份完整 Candidate JSON(5 段工作经历 + 教育 + 项目 + 技能)
+// 实测要 3000~4000 token, 2000 会被静默截断
+const RESUME_MAX_TOKENS = 8000;
 // LLM 调用超时：超过该时间仍未响应则降级到本地解析，避免阻塞用户
 const PARSE_TIMEOUT_MS = 25_000;
 
@@ -266,8 +270,13 @@ const VALID_DEGREES = new Set(['博士', '硕士', '本科', '专科', '其他']
 /**
  * 用 LLM 主导解析简历原文，返回完整 Candidate。
  * 失败/超时/返回无效 JSON 时返回 null，调用方应降级到本地 parseResumeText。
+ *
+ * truncated=true 表示模型输出被 max_tokens 掐断了 —— 此时结果可能缺字段,
+ * 调用方要告诉用户, 不能让人以为解析是完整的。
  */
-export async function parseResumeWithLLM(rawText: string): Promise<Candidate | null> {
+export async function parseResumeWithLLM(
+  rawText: string,
+): Promise<{ candidate: Candidate | null; truncated: boolean }> {
   // 截断超长简历
   const trimmed = rawText.length > RESUME_TEXT_LIMIT
     ? rawText.slice(0, RESUME_TEXT_LIMIT) + '\n...(已截断)...'
@@ -285,16 +294,20 @@ export async function parseResumeWithLLM(rawText: string): Promise<Candidate | n
   try {
     const raw = await Promise.race([
       userKey
-        ? directCall(userKey, messages, { maxTokens: 2000, temperature: 0.1 })
-        : proxiedCall(messages, { maxTokens: 2000, temperature: 0.1 }),
+        ? directCall(userKey, messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1 })
+        : proxiedCall(messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1 }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('LLM 调用超时，已降级到本地解析')), PARSE_TIMEOUT_MS)
       ),
     ]);
-    return parseCandidateFromLLM(raw, trimmed);
+    const truncated = raw.finishReason === 'length';
+    if (truncated) {
+      console.warn('[llmClient] 模型输出被 max_tokens 截断, 结果可能不完整');
+    }
+    return { candidate: parseCandidateFromLLM(raw.content, trimmed), truncated };
   } catch (e) {
     console.warn('[llmClient] LLM 解析失败，降级到本地解析:', e);
-    return null;
+    return { candidate: null, truncated: false };
   }
 }
 
@@ -311,6 +324,56 @@ function normalizeCompanyNameForCandidate(name: string): string | null {
   const resolved = resolveCompanyName(trimmed);
   if (!resolved) return null;
   return resolved.slice(0, 30);
+}
+
+// 学校名不能当公司名 —— LLM 常把教育条目塞进 workHistory,
+// 混进去会让 earliest startYear 变成本科入学年, 工作年限直接算错 (经典的 11 年 bug)。
+const SCHOOL_ALIAS_SET = new Set(SCHOOL_ALIAS_INDEX.map((x) => x.alias.replace(/\s+/g, '')));
+
+function looksLikeSchool(name: string): boolean {
+  const cleaned = name.replace(/\s+/g, '');
+  if (SCHOOL_ALIAS_SET.has(cleaned)) return true;
+  return /(?:大学|学院|学校|研究院|研究所|中学|高中)$/.test(cleaned);
+}
+
+/**
+ * 修一段被截断的 JSON —— 模型输出到一半被 max_tokens 掐断时, 前面往往已经有
+ * 完整字段, 整段丢掉太浪费。这里把文本安全地截到最后一个「完整键值对」的位置,
+ * 再补上没闭合的括号。
+ *
+ * 只在字符串外的逗号处截 —— 字符串里的逗号切下去会切出半个字符串。
+ */
+function repairTruncatedJson(s: string): string | null {
+  let inStr = false;
+  let escaped = false;
+  let cut = -1;
+  let cutStack: string[] = [];
+  const stack: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{' || ch === '[') { stack.push(ch); continue; }
+    if (ch === '}' || ch === ']') { stack.pop(); continue; }
+    if (ch === ',') {
+      cut = i;
+      // 括号栈要在「截断点当时」的状态 —— 用循环结束时的状态会多补/少补括号
+      cutStack = stack.slice();
+    }
+  }
+
+  if (cut < 0) return null;
+  let repaired = s.slice(0, cut);
+  for (let i = cutStack.length - 1; i >= 0; i--) {
+    repaired += cutStack[i] === '{' ? '}' : ']';
+  }
+  return repaired;
 }
 
 // 从 LLM 输出构造完整 Candidate (严格白名单 + 类型校验)
@@ -333,8 +396,20 @@ export function parseCandidateFromLLM(raw: string, rawText: string): Candidate |
   try {
     parsed = JSON.parse(s);
   } catch (e) {
-    console.warn('[llmClient] 解析 LLM 返回的 JSON 失败:', e);
-    return null;
+    // 输出被 max_tokens 掐断时 JSON 是残的 —— 前面往往已经有完整字段,
+    // 直接整段丢掉太浪费, 试着截到最后一个完整键值对再补上闭合符号。
+    const repaired = repairTruncatedJson(s);
+    if (!repaired) {
+      console.warn('[llmClient] 解析 LLM 返回的 JSON 失败:', e);
+      return null;
+    }
+    try {
+      parsed = JSON.parse(repaired);
+      console.warn('[llmClient] LLM 输出被截断, 已修补后使用 (结果可能缺字段)');
+    } catch (e2) {
+      console.warn('[llmClient] 解析 LLM 返回的 JSON 失败 (修补后仍失败):', e2);
+      return null;
+    }
   }
   if (!parsed || typeof parsed !== 'object') return null;
 
@@ -376,6 +451,8 @@ export function parseCandidateFromLLM(raw: string, rawText: string): Candidate |
         .filter((w: unknown) => w && typeof w === 'object')
         .map((w: any) => {
           if (typeof w.company !== 'string') return null;
+          // 学校名 → 一定不是工作经历
+          if (looksLikeSchool(w.company)) return null;
           const company = normalizeCompanyNameForCandidate(w.company);
           if (!company) return null;
           if (typeof w.title !== 'string' || !w.title.trim()) return null;
@@ -518,10 +595,10 @@ export async function polishSummary(rawSummary: string, ctx: AskContext): Promis
 
   const userKey = keyGetter();
   if (userKey) {
-    return directCall(userKey, messages, { maxTokens: 1200, temperature: 0.4 });
+    return (await directCall(userKey, messages, { maxTokens: 1200, temperature: 0.4 })).content;
   }
 
-  return proxiedCall(messages, { maxTokens: 1200, temperature: 0.4 });
+  return (await proxiedCall(messages, { maxTokens: 1200, temperature: 0.4 })).content;
 }
 
 function buildPolishPrompt(rawSummary: string, ctx: AskContext): string {
@@ -571,17 +648,23 @@ export async function askAboutAnalysis(question: string, ctx: AskContext): Promi
   // 用户自定义 Key - 走直连（高级用户 override）
   const userKey = keyGetter();
   if (userKey) {
-    return directCall(userKey, messages);
+    return (await directCall(userKey, messages)).content;
   }
 
   // 默认 - 走后端中转
-  return proxiedCall(messages);
+  return (await proxiedCall(messages)).content;
 }
+
+/** 一次模型调用的结果 —— finishReason='length' 表示输出被 max_tokens 掐断 */
+type CallResult = {
+  content: string;
+  finishReason: string | null;
+};
 
 async function proxiedCall(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   options?: { maxTokens?: number; temperature?: number }
-): Promise<string> {
+): Promise<CallResult> {
   let response: Response;
   try {
     response = await fetch(CHAT_ENDPOINT, {
@@ -608,14 +691,17 @@ async function proxiedCall(
   }
 
   const data = await response.json();
-  return (data?.content ?? '').trim();
+  return {
+    content: (data?.content ?? '').trim(),
+    finishReason: typeof data?.finishReason === 'string' ? data.finishReason : null,
+  };
 }
 
 async function directCall(
   userKey: string,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   options?: { maxTokens?: number; temperature?: number }
-): Promise<string> {
+): Promise<CallResult> {
   const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -641,7 +727,10 @@ async function directCall(
 
   const data = await response.json();
   const rawContent = data?.choices?.[0]?.message?.content?.trim() ?? '';
-  return stripThinkingTags(rawContent);
+  return {
+    content: stripThinkingTags(rawContent),
+    finishReason: data?.choices?.[0]?.finish_reason ?? null,
+  };
 }
 
 function stripThinkingTags(text: string): string {

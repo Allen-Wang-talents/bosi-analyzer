@@ -333,6 +333,11 @@ function preprocess(text: string): string {
     // 仅清理零宽字符：U+200B 零宽空格 + U+FEFF BOM。绝不能误伤普通连字符 '-'，
     // 否则日期 "2020.03 - 2023.06" 会被破坏成 "2020.03  2023.06"，所有日期匹配全部失败。
     .replace(/[\u200B\uFEFF]/g, '')
+    // 全角数字 → 半角 (Word/PDF 排版常见 "２０２０.０３")。
+    // 正则里的 \d 只认半角, 不归一的话整条日期都匹配不上 —— 工作年限直接算错。
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    // 全角小数点: "２０２０．０３" 归一数字后还剩一个全角点, 同样不认
+    .replace(/(\d)．(?=\d)/g, '$1.')
     // 中文日期写法归一 (Allen 2026-10-29):
     //   "2024年01月 - 至今" -> "2024.01 - 至今"  —— 原来的 DATE_PATTERNS 不认
     //   "年...月" 这种中间夹汉字的写法, 导致整条工作经历匹配不到日期。
@@ -474,7 +479,7 @@ function extractBirthYear(text: string): number | undefined {
   return undefined;
 }
 
-const SECTION_TITLE_BLACKLIST = /^(教育|工作|项目|技能|实习|个人|求职|联系方式|基本信息|个人简介|工作经历|教育经历|项目经验|专业技能|工作内容|Education|Work|Project|Skills?|Experience|Profile|Summary|Career|Objective)/i;
+const SECTION_TITLE_BLACKLIST = /^(教育|工作|项目|技能|实习|个人|求职|联系方式|基本信息|个人简介|工作经历|教育经历|项目经验|专业技能|工作内容|任职|Employment|Education|Work|Project|Skills?|Experience|Profile|Summary|Career|Objective)/i;
 
 // 常见的"标签词", 出现在行首时不能当人名。
 // "民族：汉族" / "期望城市：北京" 这类行首 2 个字很容易被误当成名字。
@@ -827,7 +832,7 @@ function extractEducation(text: string): Education[] {
   const sectionPatterns = [
     // 结束标志必须在行首 —— 正文里出现 "专业技能"、"项目经历" 这类词很常见,
     // 按子串匹配会把教育 section 提前截断。
-    /(?:教育经历|教育背景|学历|Education|Academic\s*Background)[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:工作经历|工作经验|项目经验|项目经历|工作内容|实习|Work\s*Experience|Projects?|Skills?)|$)/i,
+    /(?:教育经历|教育背景|学历|Education|Academic\s*Background)[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:工作经历|工作经验|任职经历|项目经验|项目经历|工作内容|实习|Work\s*Experience|Work\s*History|Employment|Projects?|Skills?)|$)/i,
   ];
 
   let section = '';
@@ -1316,7 +1321,7 @@ function hasInlineDate(line: string): boolean {
 }
 
 // 是否为简历 section header (教育/技能/项目) — 不应被当作公司名
-const SECTION_HEADER_RE = /^(教育经历|教育背景|学历|学历背景|专业技能|技能|技术栈|技能清单|项目经验|项目经历|实习经历|工作经历|工作经验|自我评价|个人简介|个人优势|Education|Academic\s*Background|Skills?|Tech\s*Stack|Projects?|Internship|Work\s*Experience|Profile|Summary|Career|Objective)/i;
+const SECTION_HEADER_RE = /^(教育经历|教育背景|学历|学历背景|专业技能|技能|技术栈|技能清单|项目经验|项目经历|实习经历|工作经历|工作经验|工作履历|任职经历|任职履历|自我评价|个人简介|个人优势|Education|Academic\s*Background|Skills?|Tech\s*Stack|Projects?|Internship|Work\s*Experience|Work\s*History|Employment|Career\s*History|Profile|Summary|Career|Objective)/i;
 function isSectionHeader(s: string): boolean {
   return SECTION_HEADER_RE.test(s.trim());
 }
@@ -1585,7 +1590,12 @@ function extractWorkHistory(text: string): WorkHistory[] {
     //
     // 结束标志必须在行首 —— 正文里出现 "项目经验沉淀"、"技能提升" 这类词很常见,
     // 按子串匹配会在第一条中间就把 section 截断, 后面的经历整段丢失。
-    /(?:工作经历|工作经验|职业经历|从业经历|工作[&＆和与、,，]\s*实习经历|专业经历|工作履历|职业历程|Employment|Work\s*Experience|Professional\s*Experience|(?<![A-Za-z])WORKS\b)(?![,，、])[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:项目经验|项目经历|教育|技能|Education|Projects?|Skills?|(?<![A-Za-z])WORKS\b)|$)/i,
+    // 长标题必须排在短标题前面 —— 'Employment' 排在 'Employment History' 前面的话,
+    // 匹配到 'Employment' 就停了, 剩下的 "History" 被当成 section 的第一行内容。
+    //
+    // 「任职经历」「Work History」这类写法以前不在名单里 → 整段文本被当成工作 section,
+    // 教育条目的年份混进 workHistory, totalYears 直接算多 (实测 11 年 vs 实际 7 年)。
+    /(?:工作经历|工作经验|职业经历|从业经历|工作[&＆和与、,，]\s*实习经历|专业经历|工作履历|任职经历|任职履历|职业历程|Employment\s*History|Employment|Work\s*Experience|Work\s*History|Professional\s*Experience|Professional\s*History|Career\s*History|Job\s*History|(?<![A-Za-z])WORKS\b)(?![,，、])[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:项目经验|项目经历|教育|技能|Education|Projects?|Skills?|(?<![A-Za-z])WORKS\b)|$)/i,
     // 实习 section 的结束标志不能是裸 "项目" —— "全球化战略运营项目实习生" 这种
     // 职位名里就带 "项目", 会把实习 section 在第一条中间截断, 整段实习经历丢失。
     /(?:实习经历|Internship|Intern\s*Experience)(?![,，、])[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:工作经历|项目经历|项目经验|教育|技能)|$)/i,
@@ -1832,7 +1842,8 @@ function extractSkills(text: string): string[] {
 //
 export async function parseResume(
   file: File,
-  onProgress?: ParseProgress
+  onProgress?: ParseProgress,
+  onWarn?: (message: string) => void,
 ): Promise<Candidate> {
   onProgress?.('文件解析中...');
   const text = await extractResumeText(file, onProgress);
@@ -1843,15 +1854,19 @@ export async function parseResume(
   onProgress?.('AI 智能解析中...');
   try {
     const mod = await import('./llmClient');
-    const llmResult = await mod.parseResumeWithLLM(text);
-    if (llmResult) {
+    const { candidate, truncated } = await mod.parseResumeWithLLM(text);
+    if (candidate) {
+      if (truncated) {
+        onWarn?.('这份简历内容太长, AI 输出被截断了 —— 解析结果可能缺一些字段, 建议手动核对并补充。');
+      }
       onProgress?.('解析完成');
-      return llmResult;
+      return candidate;
     }
   } catch (e) {
     console.warn('[parseResume] LLM 解析失败，降级到本地解析:', e);
   }
 
+  onWarn?.('AI 解析没成功, 已改用本地规则解析 —— 结果可能不如 AI 完整, 建议核对一下。');
   onProgress?.('AI 解析失败，已使用本地规则解析');
   return parseResumeText(text);
 }

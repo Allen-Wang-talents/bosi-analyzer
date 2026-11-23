@@ -14,7 +14,7 @@
 //   - 剪贴板粘贴 (Ctrl+V 图片/HTML/文本)
 //   - 解析进度展示
 // =====================================================
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles, PencilLine, LogIn } from 'lucide-react';
 import { Card, CardHeader, CardBody, TextArea, Badge, Button, Input } from '@/components/ui/Card';
@@ -84,6 +84,9 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   const [parsing, setParsing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 解析「没失败但结果不完整」的提示 —— 比如 AI 输出被截断、降级到本地规则。
+  // 这类情况以前只有一行一闪而过的进度文字, 用户根本看不到, 以为解析是完整的。
+  const [notice, setNotice] = useState<string | null>(null);
   const [supplementOpen, setSupplementOpen] = useState(false);
   const [patchName, setPatchName] = useState('');
   const [patchYears, setPatchYears] = useState('');
@@ -98,9 +101,12 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   const openAuth = useAuthStore((s) => s.openAuth);
   const pendingFileRef = useRef<File | null>(null);
   const pendingTextRef = useRef<string | null>(null);
+  const parseTimerRef = useRef<number | null>(null);
   const [draftText, setDraftText] = useState(candidate?.rawText ?? '');
 
-  const missing = detectMissingFields(candidate);
+  // 必须 memo —— detectMissingFields 每次都返回新对象,
+  // 不 memo 的话下面的 effect 每次渲染都重跑, 补充面板会被强行撑开
+  const missing = useMemo(() => detectMissingFields(candidate), [candidate]);
   const showSupplement = !!error || !!missing;
 
   /** 没登录就把简历扣下并叫起登录弹窗 —— 返回 true 表示可以继续 */
@@ -115,12 +121,13 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     [authUser, openAuth],
   );
 
-  const runParse = useCallback(async (parseFn: () => Promise<Candidate>) => {
+  const runParse = useCallback(async (parseFn: (onWarn: (msg: string) => void) => Promise<Candidate>) => {
     setError(null);
+    setNotice(null);
     setParsing(true);
     setProgress('正在解析...');
     try {
-      const parsed = await parseFn();
+      const parsed = await parseFn(setNotice);
       onChange(parsed);
       setDraftText(parsed.rawText ?? '');
       setProgress(null);
@@ -142,7 +149,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
       const file = files[0];
       if (!file) return;
       if (!requireAuth({ file })) return;
-      await runParse(() => parseResume(file, handleProgress));
+      await runParse((onWarn) => parseResume(file, handleProgress, onWarn));
     },
     [runParse, handleProgress, requireAuth],
   );
@@ -164,6 +171,9 @@ export function ResumeUploadModule({ value, onChange }: Props) {
         onChange(null);
         return;
       }
+      // 所有文本入口 (输入框 / Ctrl+V / HTML 粘贴) 都过这一道闸 ——
+      // 之前只有输入框拦了, 粘贴和 HTML 分支能绕过登录直接解析。
+      if (!requireAuth({ text })) return;
       try {
         const parsed = parseResumeText(text);
         onChange(parsed);
@@ -173,18 +183,28 @@ export function ResumeUploadModule({ value, onChange }: Props) {
         setError(`文本解析失败: ${msg}`);
       }
     },
-    [onChange],
+    [onChange, requireAuth],
   );
 
-  // 粘贴区输入 —— 同样要登录
+  // 粘贴区输入 —— 同样要登录; 并且防抖, 免得每敲一个字就打一次评分接口
   const handleTextInput = useCallback(
     (text: string) => {
       setDraftText(text);
       if (!requireAuth({ text })) return;
-      handlePasteText(text);
+      if (parseTimerRef.current !== null) window.clearTimeout(parseTimerRef.current);
+      parseTimerRef.current = window.setTimeout(() => {
+        parseTimerRef.current = null;
+        handlePasteText(text);
+      }, 600);
     },
     [requireAuth, handlePasteText],
   );
+
+  useEffect(() => {
+    return () => {
+      if (parseTimerRef.current !== null) window.clearTimeout(parseTimerRef.current);
+    };
+  }, []);
 
   /** 点拖拽区: 登录了就弹文件选择框, 没登录先登录 */
   const handleZoneClick = useCallback(() => {
@@ -196,20 +216,21 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   useEffect(() => {
     if (!authUser) return;
     const file = pendingFileRef.current;
-    if (file) {
-      pendingFileRef.current = null;
-      void runParse(() => parseResume(file, handleProgress));
-      return;
-    }
     const text = pendingTextRef.current;
-    if (text !== null) {
-      pendingTextRef.current = null;
+    if (!file && text === null) return;
+    pendingFileRef.current = null;
+    pendingTextRef.current = null;
+    if (file) {
+      void runParse((onWarn) => parseResume(file, handleProgress, onWarn));
+    } else if (text !== null) {
       handlePasteText(text);
     }
   }, [authUser, runParse, handleProgress, handlePasteText]);
 
   // Allen 2026-08-21: 把用户手动填的字段合入 candidate, 然后触发重新评分
   const applyPatch = useCallback((patch: SupplementPatch) => {
+    // 手动补充同样要登录 —— 它会直接触发一次评分
+    if (!requireAuth()) return;
     const base: Candidate = candidate ?? {
       rawText: '',
       totalYears: 0,
@@ -231,7 +252,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     onChange(merged);
     setSupplementOpen(false);
     setError(null);
-  }, [candidate, onChange]);
+  }, [candidate, onChange, requireAuth]);
 
   const handleSubmitPatch = () => {
     const skills = patchSkills
@@ -284,7 +305,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
         if (!file) continue;
         if (file.type.startsWith('image/')) {
           if (!requireAuth({ file })) return;
-          await runParse(() => parseResume(file, handleProgress));
+          await runParse((onWarn) => parseResume(file, handleProgress, onWarn));
           return;
         }
       }
@@ -407,6 +428,21 @@ export function ResumeUploadModule({ value, onChange }: Props) {
             <FormatChip icon={<Code className="w-3 h-3" />} label="HTML" />
             <FormatChip icon={<FileType2 className="w-3 h-3" />} label="RTF" />
             <FormatChip icon={<ClipboardPaste className="w-3 h-3" />} label="粘贴(Ctrl+V)" />
+          </div>
+        )}
+
+        {/* Notice — 解析没报错, 但结果可能不完整 */}
+        {notice && (
+          <div className="flex items-start gap-2 p-3 bg-status-yellow/10 border border-status-yellow/30 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-status-yellow shrink-0 mt-0.5" />
+            <p className="text-xs text-status-yellow flex-1">{notice}</p>
+            <button
+              onClick={() => setNotice(null)}
+              className="text-xs text-status-yellow hover:text-status-yellow/80 shrink-0"
+              aria-label="关闭提示"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
@@ -566,7 +602,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => onChange(null)}
+                  onClick={() => { onChange(null); setDraftText(''); }}
                   className="text-xs text-fg-muted hover:text-status-red flex items-center gap-1"
                 >
                   <X className="w-3 h-3" /> 清除

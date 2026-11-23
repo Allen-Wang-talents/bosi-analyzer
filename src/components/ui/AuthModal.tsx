@@ -4,7 +4,7 @@
 // 首次用的人直接注册: 手机号或邮箱 + 密码 + 所在公司名称 (公司必填)。
 // 注册完就自动登录, 之后关掉页面再打开还是登录态。
 // =====================================================
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, LogIn, UserPlus, Building2, AlertCircle } from 'lucide-react';
 import { cn, Button, Input } from './Card';
 import { useAuthStore } from '@/store/useAuthStore';
@@ -30,6 +30,7 @@ export function AuthModal({ open, onClose }: Props) {
   const [company, setCompany] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // 切换页签时清掉上一次的报错和输入
   useEffect(() => {
@@ -46,6 +47,17 @@ export function AuthModal({ open, onClose }: Props) {
       setConfirm('');
     }
   }, [open]);
+
+  // Esc 关闭 + 打开时把焦点送进弹窗
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    panelRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -109,9 +121,14 @@ export function AuthModal({ open, onClose }: Props) {
     <>
       <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
         <div
-          className="w-full max-w-md bg-bg-card border border-border rounded-xl shadow-2xl overflow-hidden"
+          ref={panelRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-label={tab === 'login' ? '登录' : '注册'}
+          className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto bg-bg-card border border-border rounded-xl shadow-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}

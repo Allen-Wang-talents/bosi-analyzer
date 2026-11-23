@@ -35,12 +35,12 @@ export function Header({ apiKeyStatus }: Props) {
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent-gold/60 to-transparent" />
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           {/* Logo */}
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-3.5 shrink-0">
             <div className="h-12 px-2 rounded-xl bg-bg-card border border-accent-gold/50 flex items-center justify-center overflow-hidden shadow-[0_0_24px_rgba(201,169,97,0.18)] card-sheen">
               <img
                 src="/bosi-logo.png"
                 alt="博思人才 BOSHR Logo"
-                className="h-10 w-auto object-contain"
+                className="h-10 w-auto max-w-[92px] object-contain"
               />
             </div>
             {/* 手机上只留 logo 图 (字标在下面那一行太挤), 桌面才显示全称 */}
@@ -71,7 +71,8 @@ export function Header({ apiKeyStatus }: Props) {
           </nav>
 
           {/* Right actions */}
-          <div className="flex items-center gap-2">
+          {/* 手机上只留图标 —— 带文字的话 375px 宽的屏会挤爆整行 */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {authUser ? (
               <>
                 <span className="hidden sm:inline-flex items-center gap-1.5 px-3 h-9 rounded-lg bg-bg-card border border-border text-xs text-fg-muted">
@@ -80,20 +81,20 @@ export function Header({ apiKeyStatus }: Props) {
                     {authUser.name ? `${authUser.name} @ ${authUser.company}` : authUser.company}
                   </span>
                 </span>
-                <Button size="sm" variant="ghost" onClick={() => void logout()}>
-                  <LogOut className="w-4 h-4" /> 退出
+                <Button size="sm" variant="ghost" onClick={() => void logout()} aria-label="退出登录">
+                  <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">退出</span>
                 </Button>
               </>
             ) : (
-              <Button size="sm" variant="secondary" onClick={() => openAuth()}>
-                <LogIn className="w-4 h-4" /> 登录 / 注册
+              <Button size="sm" variant="secondary" onClick={() => openAuth()} aria-label="登录或注册">
+                <LogIn className="w-4 h-4" /> <span className="hidden sm:inline">登录 / 注册</span>
               </Button>
             )}
-            <Button size="sm" variant="ghost" onClick={() => setHistoryOpen(true)}>
-              <History className="w-4 h-4" /> 历史记录
+            <Button size="sm" variant="ghost" onClick={() => setHistoryOpen(true)} aria-label="历史记录">
+              <History className="w-4 h-4" /> <span className="hidden sm:inline">历史记录</span>
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setSettingsOpen(true)}>
-              <SettingsIcon className="w-4 h-4" /> 设置
+            <Button size="sm" variant="ghost" onClick={() => setSettingsOpen(true)} aria-label="设置">
+              <SettingsIcon className="w-4 h-4" /> <span className="hidden sm:inline">设置</span>
               <ApiKeyDot status={apiKeyStatus} />
             </Button>
           </div>

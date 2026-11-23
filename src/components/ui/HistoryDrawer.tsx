@@ -2,6 +2,7 @@
 // 历史记录抽屉
 // =====================================================
 import { X, History, Trash2, Download } from 'lucide-react';
+import { useEffect } from 'react';
 import { cn } from './Card';
 import { useAnalysisStore } from '@/store/useAnalysisStore';
 
@@ -16,6 +17,21 @@ export function HistoryDrawer({ open, onClose }: Props) {
   const removeFromHistory = useAnalysisStore((s) => s.removeFromHistory);
   const clearHistory = useAnalysisStore((s) => s.clearHistory);
 
+  // 抽屉打开时锁住页面滚动 + Esc 关闭
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, onClose]);
+
   return (
     <>
       {/* Backdrop */}
@@ -29,10 +45,12 @@ export function HistoryDrawer({ open, onClose }: Props) {
 
       {/* Drawer */}
       <aside
+        aria-hidden={!open}
         className={cn(
           'fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-bg-card border-l border-border shadow-2xl',
           'transform transition-transform duration-300 ease-out flex flex-col',
-          open ? 'translate-x-0' : 'translate-x-full'
+          // 关着的时候必须不可点 —— 否则屏幕外的按钮照样能被点到/被 Tab 选中
+          open ? 'translate-x-0' : 'translate-x-full pointer-events-none'
         )}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
@@ -127,7 +145,10 @@ function HistoryItem({
             e.stopPropagation();
             if (confirm('删除这条记录？')) onRemove();
           }}
-          className="opacity-0 group-hover:opacity-100 hover:text-status-red transition-all"
+          aria-label="删除这条记录"
+          // 手机上没有 hover, opacity-0 的删除按钮永远点不到 ——
+          // 所以移动端直接常驻显示, 桌面端才用 hover 显形
+          className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-status-red transition-all"
         >
           <Trash2 className="w-3 h-3" />
         </button>

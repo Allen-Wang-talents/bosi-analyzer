@@ -17,6 +17,22 @@ function setCors(res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+/**
+ * 取真实客户端 IP。
+ * x-forwarded-for 是一串, 客户端可以自己塞一段在前面 ——
+ * 所以最后一段才是平台追加的可信值。
+ */
+function clientIp(req: VercelRequest): string {
+  const xff = req.headers['x-forwarded-for'];
+  const chain = (Array.isArray(xff) ? xff.join(',') : (xff ?? ''))
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (chain.length) return chain[chain.length - 1];
+  const real = req.headers['x-real-ip'];
+  return (Array.isArray(real) ? real[0] : real) ?? 'unknown';
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res);
 
@@ -26,8 +42,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const upstream = await fetch(`${MIRROR_URL}/api/auth`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // 镜像站按来源 IP 限流。不透传的话, 所有 Vercel 用户共用 Vercel 出口 IP
+        // 这一个桶 —— 一个人用满登录次数, 所有人一起被锁。
+        'X-Forwarded-For': clientIp(req),
+      },
       body: typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(25_000),
     });
     const text = await upstream.text();
 

@@ -58,6 +58,19 @@ export async function fetchJobs(force = false): Promise<JobsResponse> {
     const res = await fetch(`/api/jobs${force ? '?refresh=1' : ''}`);
     if (!res.ok) throw new Error(`岗位库返回 HTTP ${res.status}`);
     const data = (await res.json()) as JobsResponse;
+    // 服务端降级 + 一条岗位都没返回 → 别把屏幕上已有的岗位池清空。
+    // 以前直接把空数组丢回去, 用户看着岗位列表"全没了", 而 sessionStorage 里
+    // 其实还有 30 分钟内的好数据。
+    if (data.degraded && (!data.jobs || data.jobs.length === 0)) {
+      const cached = readCachedJobs();
+      if (cached) {
+        return {
+          ...cached,
+          degraded: true,
+          error: data.error ?? '岗位库暂时读不到，当前显示的是 30 分钟内的缓存数据。',
+        };
+      }
+    }
     if (!data.degraded && data.jobs?.length) writeCachedJobs(data);
     return data;
   } catch (e) {

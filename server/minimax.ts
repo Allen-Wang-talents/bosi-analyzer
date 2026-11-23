@@ -78,6 +78,8 @@ export async function callMiniMax(opts: {
       temperature: opts.temperature,
       messages: opts.messages,
     }),
+    // 上游挂住就把函数挂到平台上限 —— 必须自己设超时
+    signal: AbortSignal.timeout(45_000),
   });
 
   if (!upstream.ok) {
