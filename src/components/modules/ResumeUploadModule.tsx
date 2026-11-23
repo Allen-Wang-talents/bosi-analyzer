@@ -16,9 +16,10 @@
 // =====================================================
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles, PencilLine } from 'lucide-react';
+import { Upload, FileText, AlertCircle, Loader2, X, RefreshCw, ChevronDown, Image as ImageIcon, Code, FileType2, ClipboardPaste, Sparkles, PencilLine, LogIn } from 'lucide-react';
 import { Card, CardHeader, CardBody, TextArea, Badge, Button, Input } from '@/components/ui/Card';
 import { parseResume, parseResumeText } from '@/lib/parseResume';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { Candidate } from '@/types';
 
 // Allen 2026-08-21: 解析失败 / 关键字段缺失 → 引导用户手动补充
@@ -92,8 +93,27 @@ export function ResumeUploadModule({ value, onChange }: Props) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
+  // 未登录时先把简历扣下, 登录成功后自动接上
+  const authUser = useAuthStore((s) => s.user);
+  const openAuth = useAuthStore((s) => s.openAuth);
+  const pendingFileRef = useRef<File | null>(null);
+  const pendingTextRef = useRef<string | null>(null);
+  const [draftText, setDraftText] = useState(candidate?.rawText ?? '');
+
   const missing = detectMissingFields(candidate);
   const showSupplement = !!error || !!missing;
+
+  /** 没登录就把简历扣下并叫起登录弹窗 —— 返回 true 表示可以继续 */
+  const requireAuth = useCallback(
+    (payload?: { file?: File; text?: string }) => {
+      if (authUser) return true;
+      if (payload?.file) pendingFileRef.current = payload.file;
+      if (payload?.text !== undefined) pendingTextRef.current = payload.text;
+      openAuth('上传简历前请先登录 —— 首次使用点「注册」, 填一下手机号或邮箱 + 所在公司就行。');
+      return false;
+    },
+    [authUser, openAuth],
+  );
 
   const runParse = useCallback(async (parseFn: () => Promise<Candidate>) => {
     setError(null);
@@ -102,6 +122,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     try {
       const parsed = await parseFn();
       onChange(parsed);
+      setDraftText(parsed.rawText ?? '');
       setProgress(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -116,11 +137,15 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     setProgress(msg);
   }, []);
 
-  const onDrop = useCallback(async (files: File[]) => {
-    const file = files[0];
-    if (!file) return;
-    await runParse(() => parseResume(file, handleProgress));
-  }, [runParse, handleProgress]);
+  const onDrop = useCallback(
+    async (files: File[]) => {
+      const file = files[0];
+      if (!file) return;
+      if (!requireAuth({ file })) return;
+      await runParse(() => parseResume(file, handleProgress));
+    },
+    [runParse, handleProgress, requireAuth],
+  );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
@@ -128,24 +153,60 @@ export function ResumeUploadModule({ value, onChange }: Props) {
     maxFiles: 1,
     maxSize: 20 * 1024 * 1024, // 20MB（图片 + OCR 体积可能更大）
     disabled: parsing,
-    noClick: false,
-    noKeyboard: false,
+    // 点击/键盘自己接管 —— 未登录时先弹登录框, 而不是先弹文件选择框
+    noClick: true,
+    noKeyboard: true,
   });
 
-  const handlePasteText = (text: string) => {
-    if (!text.trim()) {
-      onChange(null);
+  const handlePasteText = useCallback(
+    (text: string) => {
+      if (!text.trim()) {
+        onChange(null);
+        return;
+      }
+      try {
+        const parsed = parseResumeText(text);
+        onChange(parsed);
+        setError(null);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(`文本解析失败: ${msg}`);
+      }
+    },
+    [onChange],
+  );
+
+  // 粘贴区输入 —— 同样要登录
+  const handleTextInput = useCallback(
+    (text: string) => {
+      setDraftText(text);
+      if (!requireAuth({ text })) return;
+      handlePasteText(text);
+    },
+    [requireAuth, handlePasteText],
+  );
+
+  /** 点拖拽区: 登录了就弹文件选择框, 没登录先登录 */
+  const handleZoneClick = useCallback(() => {
+    if (!requireAuth()) return;
+    open();
+  }, [requireAuth, open]);
+
+  // 登录成功 → 把刚才被扣下的简历接上
+  useEffect(() => {
+    if (!authUser) return;
+    const file = pendingFileRef.current;
+    if (file) {
+      pendingFileRef.current = null;
+      void runParse(() => parseResume(file, handleProgress));
       return;
     }
-    try {
-      const parsed = parseResumeText(text);
-      onChange(parsed);
-      setError(null);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(`文本解析失败: ${msg}`);
+    const text = pendingTextRef.current;
+    if (text !== null) {
+      pendingTextRef.current = null;
+      handlePasteText(text);
     }
-  };
+  }, [authUser, runParse, handleProgress, handlePasteText]);
 
   // Allen 2026-08-21: 把用户手动填的字段合入 candidate, 然后触发重新评分
   const applyPatch = useCallback((patch: SupplementPatch) => {
@@ -222,6 +283,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
         const file = item.getAsFile();
         if (!file) continue;
         if (file.type.startsWith('image/')) {
+          if (!requireAuth({ file })) return;
           await runParse(() => parseResume(file, handleProgress));
           return;
         }
@@ -245,7 +307,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
 
     el.addEventListener('paste', handler);
     return () => el.removeEventListener('paste', handler);
-  }, [parsing, runParse, handleProgress]);
+  }, [parsing, runParse, handleProgress, requireAuth]);
 
   return (
     <div ref={cardRef} data-module="resume-upload">
@@ -254,6 +316,23 @@ export function ResumeUploadModule({ value, onChange }: Props) {
           icon={<Upload className="w-5 h-5" />}
           title="上传简历"
           subtitle="支持 PDF / DOCX / 图片 / HTML / RTF / TXT · 也可 Ctrl+V 粘贴图片"
+          badge={
+            authUser ? (
+              <Badge color="green" variant="soft">
+                <LogIn className="w-3 h-3" />
+                {authUser.name ? `${authUser.name} · ${authUser.company}` : authUser.company}
+              </Badge>
+            ) : (
+              <Badge
+                color="gold"
+                variant="soft"
+                className="cursor-pointer"
+                onClick={() => openAuth('登录后就能上传简历了')}
+              >
+                <LogIn className="w-3 h-3" /> 登录后上传
+              </Badge>
+            )
+          }
         />
 
         <CardBody className="space-y-4">
@@ -263,6 +342,13 @@ export function ResumeUploadModule({ value, onChange }: Props) {
           role="button"
           tabIndex={0}
           aria-label="点击或拖入简历文件"
+          onClick={handleZoneClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleZoneClick();
+            }
+          }}
           className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all select-none ${
             isDragActive
               ? 'border-accent-gold bg-accent-gold/10'
@@ -303,7 +389,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
                 type="button"
                 size="sm"
                 variant="primary"
-                onClick={(e) => { e.stopPropagation(); open(); }}
+                onClick={(e) => { e.stopPropagation(); handleZoneClick(); }}
                 className="pointer-events-auto"
               >
                 <FileText className="w-4 h-4" /> 选择文件
@@ -359,8 +445,8 @@ export function ResumeUploadModule({ value, onChange }: Props) {
               <TextArea
                 placeholder="粘贴简历全文..."
                 rows={4}
-                value={candidate?.rawText ?? ''}
-                onChange={(e) => handlePasteText(e.target.value)}
+                value={draftText}
+                onChange={(e) => handleTextInput(e.target.value)}
                 maxLength={50000}
                 showCharCount
               />
@@ -473,7 +559,7 @@ export function ResumeUploadModule({ value, onChange }: Props) {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); open(); }}
+                  onClick={(e) => { e.stopPropagation(); handleZoneClick(); }}
                   className="text-xs text-fg-muted hover:text-accent-gold flex items-center gap-1"
                 >
                   <RefreshCw className="w-3 h-3" /> 重新上传

@@ -2,11 +2,12 @@
 // Header - Logo + 页面切换 + 历史/设置入口
 // =====================================================
 import { useState } from 'react';
-import { History, Settings as SettingsIcon } from 'lucide-react';
+import { History, Settings as SettingsIcon, LogIn, LogOut, Building2 } from 'lucide-react';
 import { Button, cn } from '@/components/ui/Card';
 import { HistoryDrawer } from '@/components/ui/HistoryDrawer';
 import { SettingsModal } from '@/components/ui/SettingsModal';
 import { useJobStore, type AppView } from '@/store/useJobStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import type { ApiKeyStatus } from '@/types';
 
 type Props = {
@@ -23,6 +24,9 @@ export function Header({ apiKeyStatus }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const view = useJobStore((s) => s.view);
   const setView = useJobStore((s) => s.setView);
+  const authUser = useAuthStore((s) => s.user);
+  const openAuth = useAuthStore((s) => s.openAuth);
+  const logout = useAuthStore((s) => s.logout);
 
   return (
     <>
@@ -68,6 +72,23 @@ export function Header({ apiKeyStatus }: Props) {
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
+            {authUser ? (
+              <>
+                <span className="hidden sm:inline-flex items-center gap-1.5 px-3 h-9 rounded-lg bg-bg-card border border-border text-xs text-fg-muted">
+                  <Building2 className="w-3.5 h-3.5 text-accent-gold shrink-0" />
+                  <span className="max-w-[140px] truncate">
+                    {authUser.name ? `${authUser.name} @ ${authUser.company}` : authUser.company}
+                  </span>
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => void logout()}>
+                  <LogOut className="w-4 h-4" /> 退出
+                </Button>
+              </>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={() => openAuth()}>
+                <LogIn className="w-4 h-4" /> 登录 / 注册
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setHistoryOpen(true)}>
               <History className="w-4 h-4" /> 历史记录
             </Button>

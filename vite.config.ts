@@ -8,6 +8,7 @@ import type { JobPosition } from './shared/jobs.ts'
 import chatHandler from './api/chat.ts'
 import healthHandler from './api/health.ts'
 import rankHandler from './api/rank.ts'
+import authHandler from './api/auth.ts'
 
 // 把 Vercel 的 (req, res) handler 适配到 vite dev 的 node 中间件上
 type VercelLikeHandler = (req: any, res: any) => any
@@ -143,6 +144,7 @@ export default defineConfig(({ mode }) => {
       devApi('/api/health', healthHandler),
       devApi('/api/chat', chatHandler),
       devApi('/api/rank', rankHandler),
+      devApi('/api/auth', authHandler),
     ],
     resolve: {
       alias: {
