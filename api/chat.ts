@@ -10,7 +10,8 @@ export const config = { maxDuration: 60 };
 
 // 简历解析要吐一整份 Candidate JSON —— 2000 token 根本不够(带 5 段工作经历
 // + 教育 + 项目就超了), 超了就静默截断 → JSON 解析失败 → 用户拿到的是本地规则的结果。
-const MAX_TOKENS_LIMIT = 8000;
+// 开推理时 reasoning 还要再吃掉 60% 的预算, 所以上限给到 16000。
+const MAX_TOKENS_LIMIT = 16000;
 
 // 服务模块用动态载入 —— 万一文件没进部署包, 也只是报错, 不会整个函数 500
 let minimaxModule: Promise<typeof import('../server/minimax.ts')> | null = null;
@@ -85,6 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     max_tokens?: number;
     temperature?: number;
     model?: string;
+    thinking?: { type?: string };
   };
 
   const messages = body.messages;
@@ -109,6 +111,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? Math.min(Math.max(body.temperature, 0), 2)
     : 0.5;
 
+  // 思考开关白名单 —— 只认 disabled / adaptive, 其他一律按默认(开推理)处理。
+  // 简历解析会传 disabled: 实测关推理后 2.8s / 6.1s, 带推理 16.9s / 24.1s。
+  const thinking = body.thinking?.type === 'disabled' ? 'disabled'
+    : body.thinking?.type === 'adaptive' ? 'adaptive'
+    : undefined;
+
   try {
     const result = await minimax.callMiniMax({
       apiKey,
@@ -116,6 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       maxTokens,
       temperature,
       model: body.model || minimax.DEFAULT_MODEL,
+      thinking,
+      // 上游 5xx / 429 / 网络抖动重试一次 —— 单次 25s + 退避, 两次最坏 51s < 平台 60s
+      retries: 1,
     });
     return res.status(200).json({
       content: result.content,
@@ -128,6 +139,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (err instanceof minimax.UpstreamError) {
       console.error(`[chat] MiniMax 上游错误 ${err.status}:`, err.message);
       return res.status(err.status).json({ error: minimax.upstreamMessage(err.status) });
+    }
+    if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      console.error('[chat] 上游超时:', err.message);
+      return res.status(504).json({ error: 'AI 服务响应超时，请稍后重试' });
     }
     console.error('[chat] 转发失败:', err);
     return res.status(502).json({ error: '无法连接到上游 AI 服务' });

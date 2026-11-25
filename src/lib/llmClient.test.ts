@@ -224,3 +224,94 @@ describe('LLM 输出被截断时的降级处理', () => {
     expect(result).toBeNull();
   });
 });
+
+// =====================================================
+// Allen 2026-11-25: 技能取并集, 不再二选一
+//
+// 以前 skills 只取 LLM 的, 本地那套技术词表的结果被整个丢掉。
+// 抽取类任务关掉推理后 LLM 的技能实测从 38 个掉到 27 个 (模型变懒了),
+// 漏掉的词由本地词表补回来 —— 本地词表只认简历里真实出现过的词,
+// 不含年份/公司名/整句, 干净。
+// =====================================================
+describe('技能并集: LLM ∪ 本地关键词表', () => {
+  it('LLM 漏掉的技能由本地词表补回', () => {
+    const rawText = `
+工作经历
+2021.05 - 至今  美团  算法工程师
+
+专业技能
+编程语言：Python、Go、Java
+深度学习：PyTorch、TensorFlow、Kafka
+`;
+    // LLM 只认出了 Python —— 关推理后常见的"变懒"输出
+    const llmJson = JSON.stringify({
+      totalYears: 5,
+      currentCompany: '美团',
+      currentTitle: '算法工程师',
+      education: [],
+      workHistory: [],
+      projects: [],
+      skills: ['Python'],
+    });
+
+    const result = parseCandidateFromLLM(llmJson, rawText);
+
+    expect(result).not.toBeNull();
+    // LLM 给的留着
+    expect(result!.skills).toContain('Python');
+    // 本地词表补回来的
+    expect(result!.skills).toContain('Go');
+    expect(result!.skills).toContain('PyTorch');
+    expect(result!.skills).toContain('Kafka');
+  });
+
+  it('并集里不出现年份 / 公司名 / 整句话', () => {
+    const rawText = `
+工作经历
+2020.03 - 2022.03   美团   算法工程师
+- 负责外卖商家推荐算法
+技术栈：Python、Go
+
+专业技能
+编程语言：Python、Go、Java
+`;
+    const llmJson = JSON.stringify({
+      totalYears: 3,
+      currentCompany: '美团',
+      currentTitle: '算法工程师',
+      education: [],
+      workHistory: [],
+      projects: [],
+      skills: ['Python'],
+    });
+
+    const result = parseCandidateFromLLM(llmJson, rawText);
+
+    expect(result).not.toBeNull();
+    expect(result!.skills.some((s) => /\d{4}\s*[.\-/年]/.test(s))).toBe(false);
+    expect(result!.skills).not.toContain('美团');
+    expect(result!.skills).not.toContain('负责外卖商家推荐算法');
+  });
+
+  it('LLM 与本地重复的技能只出现一次', () => {
+    const rawText = `
+专业技能
+编程语言：Python、Go
+`;
+    const llmJson = JSON.stringify({
+      totalYears: 3,
+      currentCompany: '',
+      currentTitle: '',
+      education: [],
+      workHistory: [],
+      projects: [],
+      skills: ['Python', 'Python'],
+    });
+
+    const result = parseCandidateFromLLM(llmJson, rawText);
+
+    expect(result).not.toBeNull();
+    const pyCount = result!.skills.filter((s) => s.toLowerCase() === 'python').length;
+    expect(pyCount).toBe(1);
+  });
+});

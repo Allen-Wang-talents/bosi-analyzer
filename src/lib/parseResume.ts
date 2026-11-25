@@ -55,13 +55,7 @@ async function readPdfText(file: File): Promise<string> {
     try {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      const pageText = content.items
-        .map((it: unknown) => {
-          const item = it as { str?: string; hasEOL?: boolean };
-          return item.str ?? '';
-        })
-        .join(' ');
-      lines.push(pageText);
+      lines.push(joinPdfItems(content.items));
     } catch (pageErr) {
       console.warn(`PDF 第 ${i} 页解析失败`, pageErr);
     }
@@ -69,6 +63,54 @@ async function readPdfText(file: File): Promise<string> {
   const result = lines.join('\n').trim();
   if (!result) throw new Error('PDF 文本提取为空（可能是扫描件图片 PDF，请改用文本简历或 OCR 后粘贴）');
   return result;
+}
+
+/**
+ * 把 pdfjs 的 text items 还原成带换行的文本。
+ *
+ * 之前所有 item 一律用 ' ' 拼接, hasEOL 也被丢掉 —— 结果整页 PDF 塌成一行。
+ * 这一行塌下去之后, 后面全盘皆输:
+ *   - 本地规则解析器找不到 section 边界、找不到日期锚点行 → 工作经历整段丢失
+ *   - 大模型收到的也是一坨没有分段线索的文本, 条目切分更容易出错
+ * PDF 是最主要的输入格式, 所以这一处比任何 prompt 调优都关键。
+ *
+ * 换行靠两个信号: item 自带的 hasEOL, 以及 item 的 transform[5] (基线 y 坐标) ——
+ * 同一行的文字 y 基本相同, 差值超过行高一半就认为是换了一行。
+ */
+function joinPdfItems(items: unknown[]): string {
+  let text = '';
+  let lastY: number | null = null;
+
+  for (const raw of items) {
+    const item = raw as {
+      str?: string;
+      hasEOL?: boolean;
+      height?: number;
+      transform?: number[];
+    };
+    if (typeof item.str !== 'string' || !item.str) continue;
+
+    const y = typeof item.transform?.[5] === 'number' ? item.transform[5] : null;
+    if (y !== null && lastY !== null) {
+      // 行高一半作为容差 —— 同一行里混排不同字号时基线会有微小偏移
+      const tolerance = Math.max(2, (item.height ?? 10) * 0.5);
+      if (Math.abs(y - lastY) > tolerance) {
+        text += '\n';
+      }
+    }
+    if (text && !text.endsWith('\n') && !text.endsWith(' ')) {
+      text += ' ';
+    }
+    text += item.str;
+    if (y !== null) lastY = y;
+
+    if (item.hasEOL) {
+      text += '\n';
+      lastY = null;
+    }
+  }
+
+  return text;
 }
 
 // 扫描件 PDF：每页渲染到 canvas，再 OCR
@@ -812,6 +854,60 @@ function extractCurrentCompany(_text: string, histories: WorkHistory[]): string 
   return currentEntry(histories)?.company;
 }
 
+// =====================================================
+// 章节终止标志 —— 所有 section 正则共用
+//
+// Allen 2026-11-25: 以前每个 section 各写一份终止名单, 结果三份名单互相漂移:
+//   项目 section 的名单里没有 "专业技能"/"自我评价" → 项目 section 一路吃到
+//   简历结尾, 把 "专业技能"、"自我评价" 当成两个项目 (实测项目表里混进了
+//   这两个词)。改成共用一份, 加词只改一处。
+//
+// 终止词分两档, 因为同一个词在不同简历里可能是标题、也可能是正文:
+//   宽松档 (LENIENT): 多字标题, 后面可以跟内容 —— "工作经历 2020.03 - 2023.06 …"
+//   严格档 (STRICT): 短词/易混词, 必须自己独占一行才算标题 ——
+//     "专业技能" 独占一行 = 章节标题; "技术栈：Python、Kafka" = 工作经历里
+//     的一行内容, 不能当标题 (实测踩过: 工作 section 被 "技术栈：" 截断,
+//     3 段经历只剩 1 段, totalYears 从 8 年掉到 4 年)。
+//
+// 共同硬规则: 终止词必须落在行首 —— 正文里出现 "项目"、"教育" 这类词太常见,
+// 按子串匹配会把 section 提前截断 (行首锚定用 (?<![^\n]) 前瞻)。
+const SECTION_TERMINATOR_LENIENT = [
+  // 工作
+  '工作经历|工作经验|职业经历|从业经历|工作履历|任职经历|任职履历|职业历程|专业经历|工作内容',
+  'Employment\\s*History|Work\\s*Experience|Work\\s*History|Professional\\s*Experience|Professional\\s*History|Career\\s*History|Job\\s*History',
+  // 实习
+  '实习经历|Intern\\s*Experience',
+  // 项目
+  '项目经历|项目经验|Project\\s*Experience',
+  // 教育
+  '教育经历|教育背景|学历背景|Academic\\s*Background',
+  // 自我评价
+  '自我评价|个人评价|个人简介|个人优势|自我描述|Self\\s*Evaluation',
+  // 其他
+  '联系方式|个人信息|基本信息|求职意向|Contact\\s*Info',
+].join('|');
+
+const SECTION_TERMINATOR_STRICT = [
+  // 技能 —— 只有独占一行才算章节标题
+  '专业技能|核心技能|技术能力|技术栈|技能清单|技能|Skills?|Tech\\s*Stack',
+  // 教育 / 项目 / 实习 的短写法
+  '教育|学历|Education|项目|Projects?|实习|Internship|Employment',
+  // 其他
+  '获奖|奖项|荣誉|荣誉奖项|Awards?|Honors?|Summary|Profile|Objective|(?<![A-Za-z])WORKS\\b',
+].join('|');
+
+/**
+ * 章节终止前瞻。
+ * 宽松档: 终止词后面跟空格/换行都行 (但不能直接跟正文, 否则 "项目背景：xxx"
+ *         这种描述行会被当成标题)。
+ * 严格档: 终止词必须独占一行 (允许行尾一个冒号), 否则后面还有正文就作废。
+ */
+const SECTION_END =
+  `(?=(?<![^\\n])\\s*(?:` +
+  `(?:${SECTION_TERMINATOR_LENIENT})(?![^\\s\\n])` +
+  `|(?:${SECTION_TERMINATOR_STRICT})[ \\t]*[:：]?[ \\t]*(?:\\n|$)` +
+  `))`;
+
 // 教育经历
 //
 // Allen 2026-07-24 修复:
@@ -832,7 +928,13 @@ function extractEducation(text: string): Education[] {
   const sectionPatterns = [
     // 结束标志必须在行首 —— 正文里出现 "专业技能"、"项目经历" 这类词很常见,
     // 按子串匹配会把教育 section 提前截断。
-    /(?:教育经历|教育背景|学历|Education|Academic\s*Background)[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:工作经历|工作经验|任职经历|项目经验|项目经历|工作内容|实习|Work\s*Experience|Work\s*History|Employment|Projects?|Skills?)|$)/i,
+    //
+    // Allen 2026-11-25: 标题也要落在行首 —— "最高学历：硕士" 这种行内写法
+    // 会把教育 section 劫持成 "硕士", 后面整段学历全丢。
+    new RegExp(
+      String.raw`(?:^|\n)[ \t]*[【\[]?(?:教育经历|教育背景|学历背景|学历|Education|Academic\s*Background)(?![,，、])([\s\S]+?)(${SECTION_END}|$)`,
+      'i',
+    ),
   ];
 
   let section = '';
@@ -1384,6 +1486,20 @@ function isDateAnchorLine(line: string): boolean {
 
 // 解析单个工作 block，返回 WorkHistory 或 null
 /**
+ * 这一行像不像描述句 —— "负责抖音推荐系统大模型特征工程" 这种。
+ *
+ * 往回看找公司名时不能把这种行当公司行: 行里的品牌词会被归一成母公司,
+ * 整条经历串台 (实测京东那条经历被解析成了字节跳动, 因为上一行的
+ * "负责抖音…" 里的"抖音"被归一成了字节跳动)。
+ */
+function looksLikeDescriptionLine(line: string): boolean {
+  const t = line.trim();
+  if (!t) return true;
+  if (/[。！？；]/.test(t)) return true;
+  return /^(负责|参与|主导|使用|搭建|开发|设计|优化|实现|完成|推动|协助|支持|基于|结合|围绕|针对|主要|日常|独立|深入|完成|输出|沉淀|落地)/.test(t);
+}
+
+/**
  * 一条工作经历的候选起点 —— 日期行本身, 以及往前 1~2 行。
  * 往回看时遇到日期行(上一条经历)或项目符号(上一段的正文)就停。
  */
@@ -1395,6 +1511,9 @@ function candidateStarts(dIdx: number, lines: string[]): number[] {
     const line = lines[i];
     if (isDateOnlyLine(line) || hasInlineDate(line)) break;
     if (isBulletLine(line)) break;
+    // 描述句不能当公司行的起点 —— 但不 break, 继续往前找
+    // (公司名可能写在描述句上面, 比如 "阿里巴巴\n负责交易系统\n2020.03 - …")
+    if (looksLikeDescriptionLine(line)) continue;
     starts.push(i);
   }
   return starts;
@@ -1595,10 +1714,21 @@ function extractWorkHistory(text: string): WorkHistory[] {
     //
     // 「任职经历」「Work History」这类写法以前不在名单里 → 整段文本被当成工作 section,
     // 教育条目的年份混进 workHistory, totalYears 直接算多 (实测 11 年 vs 实际 7 年)。
-    /(?:工作经历|工作经验|职业经历|从业经历|工作[&＆和与、,，]\s*实习经历|专业经历|工作履历|任职经历|任职履历|职业历程|Employment\s*History|Employment|Work\s*Experience|Work\s*History|Professional\s*Experience|Professional\s*History|Career\s*History|Job\s*History|(?<![A-Za-z])WORKS\b)(?![,，、])[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:项目经验|项目经历|教育|技能|Education|Projects?|Skills?|(?<![A-Za-z])WORKS\b)|$)/i,
+    //
+    // Allen 2026-11-25: 标题必须落在行首 —— 否则表头里的 "6年工作经验" 会先于正文的
+    // "工作经历" 命中, section 被截成 "6年工作经验", 整段工作经历直接消失 (实测 0 段)。
+    // 前缀 (?:^|\n)[ \t]* 让 "6年工作经验" 这种同行前缀的数字自然落选。
+    // 后面再挡一次 "工作经验：6 年" 这种标签写法 —— 它也不是 section 标题。
+    new RegExp(
+      String.raw`(?:^|\n)[ \t]*[【\[]?(?:工作经历|工作经验|职业经历|从业经历|工作[&＆和与、,，]\s*实习经历|专业经历|工作履历|任职经历|任职履历|职业历程|Employment\s*History|Employment|Work\s*Experience|Work\s*History|Professional\s*Experience|Professional\s*History|Career\s*History|Job\s*History|(?<![A-Za-z])WORKS\b)(?![,，、])(?!(?::|：)?[ \t]*[1-9]\d?\s*年)([\s\S]+?)(${SECTION_END}|$)`,
+      'i',
+    ),
     // 实习 section 的结束标志不能是裸 "项目" —— "全球化战略运营项目实习生" 这种
     // 职位名里就带 "项目", 会把实习 section 在第一条中间截断, 整段实习经历丢失。
-    /(?:实习经历|Internship|Intern\s*Experience)(?![,，、])[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:工作经历|项目经历|项目经验|教育|技能)|$)/i,
+    new RegExp(
+      String.raw`(?:^|\n)[ \t]*[【\[]?(?:实习经历|Internship|Intern\s*Experience)(?![,，、])([\s\S]+?)(${SECTION_END}|$)`,
+      'i',
+    ),
   ];
 
   let section = '';
@@ -1701,7 +1831,12 @@ function extractProjects(text: string): Project[] {
   const projects: Project[] = [];
 
   const sectionPatterns = [
-    /(?:项目经验|项目经历|项目|Projects?|Project\s*Experience)[:：]?\s*([\s\S]+?)(?=(?<![^\n])\s*(?:教育|技能|工作经历|获奖|Education|Skills?|Work)|$)/i,
+    // 标题要落在行首 —— 正文里 "负责商城项目开发"、"主导 XX 项目" 这类句子
+    // 会先于真正的章节标题命中, 把项目 section 截成一句话。
+    new RegExp(
+      String.raw`(?:^|\n)[ \t]*[【\[]?(?:项目经验|项目经历|项目|Projects?|Project\s*Experience)(?![,，、])([\s\S]+?)(${SECTION_END}|$)`,
+      'i',
+    ),
   ];
 
   let section = '';
@@ -1736,6 +1871,10 @@ function extractProjects(text: string): Project[] {
       if (!line) continue;
       // 跳过数字编号
       const cleaned = line
+        // 先剥掉行首的日期区间 —— "2023.03 - 2023.09   多模态商品理解大模型"
+        // 这种写法里项目名在日期后面, 不剥掉就会把 "03 - 2023.09" 当成项目名
+        // (实测项目表里全是 "03 - 2023.09   xxx")。
+        .replace(/^\s*\d{4}[.\-/年]\s*\d{1,2}\s*月?\s*[-—–~～至到]\s*(?:\d{4}[.\-/年]\s*\d{1,2}\s*月?|至今|现在|present|now)\s*/i, '')
         .replace(/^[\d]+[.、)）]\s*/, '')
         .replace(/^【.+?】\s*/, '')
         .trim();
@@ -1767,42 +1906,34 @@ function extractProjects(text: string): Project[] {
 }
 
 // 技能
-function extractSkills(text: string): string[] {
-  const skills = new Set<string>();
-
-  const patterns = [
-    /(?:专业技能|技能|技术栈|技术能力|核心技能|Skills?|Tech\s*Stack)[:：]?\s*([\s\S]+?)(?=(?:项目|工作经历|教育|获奖|Projects?|Work|$))/i,
-  ];
-
-  let section = '';
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m) { section = m[1]; break; }
-  }
-
-  if (section) {
-    const tokens = section.split(/[\s,，、;；。\n•●|·]+/).map((t) => t.trim()).filter(Boolean);
-    for (const t of tokens) {
-      if (t.length >= 2 && t.length <= 30) skills.add(t);
-    }
-  } else {
-    // Fallback: 全文搜索扩展关键词库
-    const techKeywords = [
-      // 前端
-      'React', 'Vue', 'Angular', 'Svelte', 'Solid', 'TypeScript', 'JavaScript', 'Node.js', 'Next.js', 'Nuxt',
-      'Webpack', 'Vite', 'Rollup', 'TailwindCSS', 'Sass', 'Less', 'Redux', 'MobX', 'Zustand',
-      // 后端
-      'Python', 'Java', 'Go', 'Golang', 'Rust', 'C++', 'C#', '.NET', 'Ruby', 'PHP',
-      'Spring', 'Spring Boot', 'Spring Cloud', 'Django', 'Flask', 'FastAPI', 'Express', 'Koa', 'NestJS', 'Rails',
-      'GraphQL', 'gRPC', 'REST', 'WebSocket', 'WebAssembly',
-      // 数据库
-      'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Elasticsearch', 'ClickHouse', 'Memcached', 'Cassandra',
-      'Kafka', 'RabbitMQ', 'RocketMQ', 'Pulsar',
-      // 云/运维
-      'AWS', 'Azure', 'GCP', 'Aliyun', 'Kubernetes', 'K8s', 'Docker', 'Terraform', 'Ansible', 'Pulumi',
-      'CI/CD', 'Jenkins', 'GitLab CI', 'GitHub Actions', 'CircleCI',
-      // 大数据/AI
-      'Hadoop', 'Spark', 'Flink', 'Storm', 'Hive', 'Presto', 'Trino', 'Druid', 'Airflow', 'dbt',
+//
+// Allen 2026-11-25 重写。原来只有「命中技能 section」才走 section 切分, 否则才退到
+// 关键词库全文扫描 —— 结果两条路都有坑:
+//
+//	1) section 切分那条路: "技术栈：Python、Go" 这种行出现在某段工作经历下面时,
+//	   技能正则先命中它, 把后面到下一个标题为止的所有内容按标点切开当技能 ——
+//	   实测技能表里混进了 "2020.03"、"美团"、"负责外卖商家推荐算法" 这种东西。
+//	2) 关键词库那条路: 只在没命中 section 时才走, 也就是说上面那种情况根本扫不到。
+//
+// 改成两条路都走, 取并集:
+//	- 关键词库全文扫描: 干净、只认简历里真实出现过的技术词, 不依赖 section 边界
+//	- 技能行: 补关键词库没有的冷门词。只认「以技能表头开头、不是 bullet、不含日期」的整行
+const TECH_KEYWORDS = [
+  // 前端
+  'React', 'Vue', 'Angular', 'Svelte', 'Solid', 'TypeScript', 'JavaScript', 'Node.js', 'Next.js', 'Nuxt',
+  'Webpack', 'Vite', 'Rollup', 'TailwindCSS', 'Sass', 'Less', 'Redux', 'MobX', 'Zustand',
+  // 后端
+  'Python', 'Java', 'Go', 'Golang', 'Rust', 'C++', 'C#', '.NET', 'Ruby', 'PHP',
+  'Spring', 'Spring Boot', 'Spring Cloud', 'Django', 'Flask', 'FastAPI', 'Express', 'Koa', 'NestJS', 'Rails',
+  'GraphQL', 'gRPC', 'REST', 'WebSocket', 'WebAssembly',
+  // 数据库
+  'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'Elasticsearch', 'ClickHouse', 'Memcached', 'Cassandra',
+  'Kafka', 'RabbitMQ', 'RocketMQ', 'Pulsar',
+  // 云/运维
+  'AWS', 'Azure', 'GCP', 'Aliyun', 'Kubernetes', 'K8s', 'Docker', 'Terraform', 'Ansible', 'Pulumi',
+  'CI/CD', 'Jenkins', 'GitLab CI', 'GitHub Actions', 'CircleCI',
+  // 大数据/AI
+  'Hadoop', 'Spark', 'Flink', 'Storm', 'Hive', 'Presto', 'Trino', 'Druid', 'Airflow', 'dbt',
       'TensorFlow', 'PyTorch', 'PaddlePaddle', 'LLM', 'RAG', 'LangChain', 'LlamaIndex',
       'Hugging Face', 'Transformers', 'Stable Diffusion', 'GPT', 'BERT', 'DeepSpeed', 'vLLM',
       // 移动端
@@ -1813,16 +1944,103 @@ function extractSkills(text: string): string[] {
       '电商', '社交', '内容', '游戏', '金融', '医疗', '教育',
       // 通用
       'Git', 'Linux', 'Shell', 'Bash', 'Agile', 'Scrum', 'DevOps', 'SRE', 'TDD',
-    ];
-    for (const kw of techKeywords) {
-      // 转义正则特殊字符
-      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(`(?:^|[^一-龥A-Za-z0-9])(${escaped})(?:[^一-龥A-Za-z0-9]|$)`);
-      if (re.test(text)) skills.add(kw);
-    }
+];
+
+// 技能表头 —— 这些词开头的行才可能是技能清单
+const SKILL_HEADER_RE =
+  /^(?:专业技能|核心技能|技术能力|技术栈|技能清单|技能|编程语言|语言|框架|数据库|中间件|工具|Skills?|Tech\s*Stack)\s*[:：]?\s*(.*)$/i;
+
+// 出现在技能 token 里的这些词说明它是描述句而不是技能名
+const SKILL_STOPWORDS =
+  /负责|参与|使用|开发|设计|搭建|主导|优化|实现|完成|熟悉|精通|熟练|良好|扎实|优秀|丰富|能力|经验|以上|优先|掌握|深入|具备|独立|协作|沟通|责任心|可作为|可以作为|能够|可以|工作语言/;
+
+// 一个 token 长得像技能名吗
+function isPlausibleSkillToken(t: string): boolean {
+  if (!t || t.length < 2 || t.length > 30) return false;
+  // 纯数字 / 年份 / 日期片段
+  if (/^\d+$/.test(t)) return false;
+  if (/^\d{4}[.\-/年]/.test(t)) return false;
+  // 含日期区间
+  if (/\d{4}\s*[.\-/年]?\s*\d{0,2}\s*[-—–到至]/.test(t)) return false;
+  // 描述句
+  if (SKILL_STOPWORDS.test(t)) return false;
+  return true;
+}
+
+/**
+ * 技能行 → token 列表。不是技能行就返回 null。
+ *
+ * 两种认法:
+ *   - 行首是技能表头 ("技术栈"、"编程语言"、"Skills") → 表头后面就是清单, 宽容地留合法项
+ *   - 行中有冒号 ("深度学习：PyTorch、TensorFlow")     → 冒号后面必须全是像技能名的项,
+ *     只要混进一个描述句 ("项目描述：基于 CLIP 构建…") 就整行判否
+ */
+function skillListTokens(line: string): string[] | null {
+  const trimmed = line.trim();
+  const header = SKILL_HEADER_RE.exec(trimmed);
+
+  let rest: string;
+  let strict: boolean;
+  if (header) {
+    rest = header[1];
+    strict = false;
+  } else {
+    const colonIdx = trimmed.search(/[:：]/);
+    if (colonIdx < 0) return null;
+    rest = trimmed.slice(colonIdx + 1);
+    strict = true;
   }
 
-  return Array.from(skills).slice(0, 30);
+  const tokens = rest
+    .split(/[\s,，、;；。|·+]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+  if (strict && !tokens.every(isPlausibleSkillToken)) return null;
+
+  return tokens.filter(isPlausibleSkillToken);
+}
+
+function extractSkills(text: string): string[] {
+  const skills = new Set<string>();
+
+  // 1) 关键词库全文扫描 —— 干净, 只认简历里真实出现过的技术词
+  for (const kw of TECH_KEYWORDS) {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:^|[^一-龥A-Za-z0-9])(${escaped})(?:[^一-龥A-Za-z0-9]|$)`);
+    if (re.test(text)) skills.add(kw);
+  }
+
+  // 2) 简历自己写的技能行 —— 补关键词库没有的冷门词
+  //    只认「不是 bullet、不含日期」的行。bullet 是工作/项目描述,
+  //    含日期的是经历条目 —— 两者都别当技能。
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || isBulletLine(line) || hasInlineDate(line)) continue;
+
+    const header = SKILL_HEADER_RE.exec(line);
+    if (header && header[1].trim()) {
+      // "技术栈：Python、Go" —— 表头和清单在同一行
+      for (const tok of skillListTokens(line) ?? []) skills.add(tok);
+      continue;
+    }
+
+    // "专业技能" 独占一行 —— 下面几行才是清单
+    if (header) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (!next || isBulletLine(next) || hasInlineDate(next)) break;
+        for (const tok of skillListTokens(next) ?? []) skills.add(tok);
+      }
+      continue;
+    }
+
+    // "深度学习：PyTorch、TensorFlow" —— 无表头但有冒号
+    for (const tok of skillListTokens(line) ?? []) skills.add(tok);
+  }
+
+  return Array.from(skills).slice(0, 40);
 }
 
 // 公开入口 - LLM 主导解析，本地作为静默兜底
@@ -1854,19 +2072,40 @@ export async function parseResume(
   onProgress?.('AI 智能解析中...');
   try {
     const mod = await import('./llmClient');
-    const { candidate, truncated } = await mod.parseResumeWithLLM(text);
+    const { candidate, truncated, textTruncated, failure } = await mod.parseResumeWithLLM(text);
     if (candidate) {
+      if (textTruncated) {
+        onWarn?.('这份简历太长了, AI 只看了前面一部分 —— 后面的经历可能没解析到, 建议核对一下。');
+      }
       if (truncated) {
         onWarn?.('这份简历内容太长, AI 输出被截断了 —— 解析结果可能缺一些字段, 建议手动核对并补充。');
       }
       onProgress?.('解析完成');
       return candidate;
     }
+    // 失败原因分不同提示 —— 一律说"解析没成功"会让人以为是玄学问题
+    onWarn?.(failureMessage(failure));
   } catch (e) {
     console.warn('[parseResume] LLM 解析失败，降级到本地解析:', e);
+    onWarn?.('AI 解析没成功, 已改用本地规则解析 —— 结果可能不如 AI 完整, 建议核对一下。');
   }
 
-  onWarn?.('AI 解析没成功, 已改用本地规则解析 —— 结果可能不如 AI 完整, 建议核对一下。');
   onProgress?.('AI 解析失败，已使用本地规则解析');
   return parseResumeText(text);
+}
+
+/** 失败原因 → 用户能看懂、并且知道下一步做什么的提示 */
+function failureMessage(failure?: string): string {
+  switch (failure) {
+    case 'timeout':
+      return 'AI 解析超时了 (等了 55 秒) —— 已改用本地规则解析, 建议核对一下。';
+    case 'network':
+      return '连不上 AI 服务 (网络问题) —— 已改用本地规则解析, 建议核对一下。';
+    case 'bad-json':
+      return 'AI 返回的内容不完整, 没能解析成结构化信息 —— 已改用本地规则解析, 建议核对一下。';
+    case 'upstream':
+      return 'AI 服务暂时不可用 —— 已改用本地规则解析, 建议核对一下。';
+    default:
+      return 'AI 解析没成功, 已改用本地规则解析 —— 结果可能不如 AI 完整, 建议核对一下。';
+  }
 }

@@ -32,6 +32,10 @@ jobs:
           - name: Netlify
             base: https://bosi-analyzer.netlify.app
     steps:
+      # 简历解析探针要用前端真实的 system prompt —— 从源码里抽出来,
+      # 这样探针测的是线上真实契约, 而不是自己编的一套简化 prompt。
+      - uses: actions/checkout@v5
+
       - name: 首页
         run: |
           code=$(curl -s -o /tmp/home -w '%{http_code}' --max-time 25 "${{ matrix.base }}/")
@@ -109,6 +113,87 @@ jobs:
             exit 1
           }
           echo "chat OK: $content"
+
+      # =====================================================
+      # 简历解析探针 —— 用户最常踩的坑 (上传简历后页面什么都不出)
+      #
+      # 之前这里一条简历解析链路都没测, 所以线上解析挂了 CI 一声不吭。
+      # 断言: HTTP 200 / finishReason 不是 length (输出没被掐断) /
+      #       JSON 能解析出来 / 有 workHistory 和 education / 耗时 < 30 秒
+      #
+      # 用前端真实的 system prompt (从源码里抽), 免得探针测的是另一套契约。
+      # thinking 关掉 —— 抽取类任务不需要推理, 而且这是耗时的最大杠杆。
+      # =====================================================
+      - name: 简历解析 (AI 抽取整份 Candidate)
+        run: |
+          cat > /tmp/resume.txt <<'RESUME'
+          张伟
+          男 | 1994年3月 | 北京 | 13800138001 | zhangwei.ai@example.com | 6年工作经验
+
+          教育背景
+          2012.09 - 2016.06  北京邮电大学  计算机科学与技术  本科
+          2016.09 - 2018.06  中国科学院大学  计算机技术  硕士
+
+          工作经历
+
+          2022.04 - 至今   字节跳动  高级算法工程师
+          - 负责抖音推荐系统大模型特征工程
+
+          2020.03 - 2022.03   美团   算法工程师
+          - 负责外卖商家推荐算法
+
+          2018.07 - 2020.02   京东   数据挖掘工程师
+          - 负责商城搜索排序模型开发
+
+          专业技能
+          编程语言：Python、Go、Java
+          深度学习：PyTorch、TensorFlow、Kafka
+          RESUME
+
+          node -e '
+            const fs = require("fs");
+            const src = fs.readFileSync("src/lib/llmClient.ts", "utf8");
+            const m = src.match(/const RESUME_PARSE_SYSTEM_PROMPT = `([\s\S]*?)`;\n/);
+            if (!m) { console.error("抽不出 RESUME_PARSE_SYSTEM_PROMPT"); process.exit(1); }
+            fs.writeFileSync("/tmp/sys.txt", m[1]);
+          '
+
+          jq -n --rawfile sys /tmp/sys.txt --rawfile resume /tmp/resume.txt \
+            '{messages:[
+               {role:"system", content:$sys},
+               {role:"user", content:("请从以下简历文本中提取结构化 JSON。\n\n# 简历文本\n" + $resume)}
+             ],
+             max_tokens:16000, temperature:0.1, thinking:{type:"disabled"}}' > /tmp/payload.json
+
+          start=$(date +%s)
+          code=$(curl -s -o /tmp/parse -w '%{http_code}' --max-time 55 \
+            -X POST -H 'Content-Type: application/json' \
+            --data @/tmp/payload.json \
+            "${{ matrix.base }}/api/chat")
+          elapsed=$(( $(date +%s) - start ))
+          echo "parse -> HTTP $code, 耗时 ${elapsed}s"
+          [ "$code" = "200" ] || { echo "::error::简历解析不通"; head -c 300 /tmp/parse; exit 1; }
+
+          finish=$(jq -r '.finishReason // "?"' /tmp/parse)
+          [ "$finish" != "length" ] || {
+            echo "::error::简历解析输出被 max_tokens 掐断 (finishReason=length) —— 解析结果是残的"
+            exit 1
+          }
+          [ "$elapsed" -lt 30 ] || {
+            echo "::error::简历解析太慢 (${elapsed}s) —— 前端 55 秒超时会挂"
+            exit 1
+          }
+
+          jq -r '.content // ""' /tmp/parse > /tmp/candidate.json
+          jq -e '(.workHistory // []) | length > 0' /tmp/candidate.json > /dev/null || {
+            echo "::error::简历解析没抽出工作经历"
+            head -c 400 /tmp/candidate.json; exit 1
+          }
+          jq -e '(.education // []) | length > 0' /tmp/candidate.json > /dev/null || {
+            echo "::error::简历解析没抽出教育经历"
+            head -c 400 /tmp/candidate.json; exit 1
+          }
+          echo "简历解析 OK: $(jq -r '(.workHistory // []) | length' /tmp/candidate.json) 段工作经历, $(jq -r '(.education // []) | length' /tmp/candidate.json) 段教育, $(jq -r '(.skills // []) | length' /tmp/candidate.json) 个技能"
 
       - name: 精排接口 (发一条假岗位, 验证模块装载 + 上游连通)
         run: |

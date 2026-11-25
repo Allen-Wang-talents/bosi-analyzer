@@ -196,3 +196,144 @@ describe('模块完整性 sanity check', () => {
     expect(isProductName('广告系统事业部')).toBe(true);
   });
 });
+
+// =====================================================
+// Allen 2026-11-25: 简历解析"经常失败"的三个根因回归
+//
+// 真实案例: 一份 PDF 简历上传后, 页面上什么都不出 (评分不跑)。
+//   根因1 —— 表头 "6年工作经验" 劫持了工作 section, 工作经历整段丢失
+//   根因2 —— PDF 抽出来的文本整页塌成一行, section / 日期锚点全找不到
+//   根因3 —— 技能 section 命中工作经历里的 "技术栈：" 行, 技能表混进
+//            年份、公司名和整句话
+// =====================================================
+
+describe('回归 1: 表头 "N年工作经验" 不能劫持工作 section', () => {
+  it('工作经历仍然能抽出全部条目', () => {
+    const resume = `
+张伟
+男 | 1994年3月 | 北京 | 13800138001 | zhangwei.ai@example.com | 6年工作经验
+
+教育背景
+2012.09 - 2016.06  北京邮电大学  计算机科学与技术  本科
+2016.09 - 2018.06  中国科学院大学  计算机技术  硕士
+
+工作经历
+
+2022.04 - 至今   字节跳动  高级算法工程师
+- 负责抖音推荐系统大模型特征工程
+
+2020.03 - 2022.03   美团   算法工程师
+- 负责外卖商家推荐算法
+
+2018.07 - 2020.02   京东   数据挖掘工程师
+- 负责商城搜索排序模型开发
+`;
+    const result = parseResumeText(resume);
+    expect(result.workHistory.length).toBe(3);
+    expect(result.workHistory.map((w) => w.company)).toEqual(
+      expect.arrayContaining(['字节跳动', '美团', '京东']),
+    );
+  });
+
+  it('"工作经验：6 年" 这种标签写法同样不算 section 标题', () => {
+    const resume = `
+工作经验：6 年
+2020.03 - 2023.06   阿里巴巴   高级后端工程师
+负责交易系统
+`;
+    const result = parseResumeText(resume);
+    expect(result.workHistory.length).toBe(1);
+    expect(result.workHistory[0].company).toBe('阿里巴巴');
+  });
+});
+
+describe('回归 2: PDF 式文本 (保留换行) 能正常解析', () => {
+  it('保留行结构的 PDF 文本能抽出工作经历和技能', () => {
+    // 模拟 pdfjs 抽出的文本: 一行一个 text item, 有换行
+    const pdfLikeText = [
+      '张伟  13800138001  北京',
+      '工作经历',
+      '2022.04 - 至今  字节跳动  高级算法工程师',
+      '负责抖音推荐系统大模型特征工程',
+      '2018.07 - 2020.02  京东  数据挖掘工程师',
+      '负责商城搜索排序模型开发',
+      '专业技能',
+      '编程语言：Python、Go、Java',
+      '深度学习：PyTorch、TensorFlow',
+    ].join('\n');
+
+    const result = parseResumeText(pdfLikeText);
+    expect(result.workHistory.length).toBe(2);
+    expect(result.workHistory.map((w) => w.company)).toEqual(
+      expect.arrayContaining(['字节跳动', '京东']),
+    );
+    expect(result.skills).toContain('Python');
+    expect(result.skills).toContain('PyTorch');
+  });
+});
+
+describe('回归 3: 技能表不能混进年份 / 公司名 / 整句话', () => {
+  it('工作经历里的 "技术栈：" 行不会污染技能', () => {
+    const resume = `
+工作经历
+2020.03 - 2022.03   美团   算法工程师
+- 负责外卖商家推荐算法
+技术栈：Python、Go、Kafka
+
+2022.04 - 至今   字节跳动   高级算法工程师
+- 负责推荐系统
+
+专业技能
+编程语言：Python、Go、Java
+深度学习：PyTorch、TensorFlow
+`;
+    const result = parseResumeText(resume);
+    expect(result.skills.length).toBeGreaterThan(0);
+    // 没有年份
+    expect(result.skills.some((s) => /\d{4}\s*[.\-/年]/.test(s))).toBe(false);
+    // 没有公司名
+    expect(result.skills).not.toContain('美团');
+    expect(result.skills).not.toContain('字节跳动');
+    // 没有整句话
+    expect(result.skills).not.toContain('负责外卖商家推荐算法');
+    // 该认的都认到了
+    expect(result.skills).toContain('Python');
+    expect(result.skills).toContain('PyTorch');
+    expect(result.skills).toContain('Kafka');
+  });
+
+  it('技能 token 长度受限, 不会出现超长描述句', () => {
+    const resume = `
+专业技能
+编程语言：Python、Go、Java
+熟悉并深入理解大规模分布式系统架构设计与性能优化最佳实践
+`;
+    const result = parseResumeText(resume);
+    expect(result.skills.every((s) => s.length <= 30)).toBe(true);
+  });
+});
+
+describe('回归 4: 项目 section 在 "专业技能" / "自我评价" 处正确收尾', () => {
+  it('项目名里不会出现 "专业技能" / "自我评价"', () => {
+    const resume = `
+项目经历
+
+2023.03 - 2023.09   多模态商品理解大模型
+项目描述：基于CLIP和BERT构建商品多模态表征模型
+
+2021.05 - 2021.12   实时推荐特征平台
+项目描述：自研实时特征平台
+
+专业技能
+编程语言：Python、Go、Java
+
+自我评价
+5年AI算法工程经验
+`;
+    const result = parseResumeText(resume);
+    expect(result.projects.map((p) => p.name)).toEqual([
+      '多模态商品理解大模型',
+      '实时推荐特征平台',
+    ]);
+  });
+});

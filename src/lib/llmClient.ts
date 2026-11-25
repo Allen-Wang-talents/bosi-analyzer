@@ -258,14 +258,26 @@ export async function validateApiKey(key: string): Promise<boolean> {
 //
 
 // 单条输入上限，避免超长简历撑爆 token
-const RESUME_TEXT_LIMIT = 8000;
+const RESUME_TEXT_LIMIT = 20_000;
 // 简历解析的输出预算 —— 一份完整 Candidate JSON(5 段工作经历 + 教育 + 项目 + 技能)
-// 实测要 3000~4000 token, 2000 会被静默截断
-const RESUME_MAX_TOKENS = 8000;
-// LLM 调用超时：超过该时间仍未响应则降级到本地解析，避免阻塞用户
-const PARSE_TIMEOUT_MS = 25_000;
+// 实测要 3000~4000 token, 2000 会被静默截断。
+// 关推理后 reasoning 不再吃预算, 但仍留足余量, 免得边缘情况又被掐断。
+const RESUME_MAX_TOKENS = 16_000;
+// 简历解析的超时。
+//
+// Allen 2026-11-25: 25s → 55s。原来 25s 正好卡在长简历的实测耗时上
+// (长简历带推理 24.1s) —— 长简历基本必挂, 然后静默降级到本地规则解析,
+// 用户看到的就是"解析失败"。
+// 新预算: 服务端(/api/chat)会重试一次, 最坏 = 25s + 1s 退避 + 25s = 51s,
+// 前端必须比它长, 这样服务端的真实报错能先返回, 而不是前端自己先超时。
+const PARSE_TIMEOUT_MS = 55_000;
+// 问答 / 摘要润色等常规调用的超时 (服务端平台上限 60s)
+const DEFAULT_CALL_TIMEOUT_MS = 58_000;
 
 const VALID_DEGREES = new Set(['博士', '硕士', '本科', '专科', '其他']);
+
+/** 解析失败的原因分类 —— 不同的原因要给用户不同的提示, 不能一律吞成 "AI 解析没成功" */
+export type ParseFailure = 'timeout' | 'network' | 'upstream' | 'bad-json';
 
 /**
  * 用 LLM 主导解析简历原文，返回完整 Candidate。
@@ -273,13 +285,22 @@ const VALID_DEGREES = new Set(['博士', '硕士', '本科', '专科', '其他']
  *
  * truncated=true 表示模型输出被 max_tokens 掐断了 —— 此时结果可能缺字段,
  * 调用方要告诉用户, 不能让人以为解析是完整的。
+ * textTruncated=true 表示简历原文太长被截过 —— 同样要让用户知道。
+ * failure 标出失败原因, 让调用方能给出准确提示 (而不是笼统的 "降级到本地")。
  */
 export async function parseResumeWithLLM(
   rawText: string,
-): Promise<{ candidate: Candidate | null; truncated: boolean }> {
+): Promise<{
+  candidate: Candidate | null;
+  truncated: boolean;
+  textTruncated: boolean;
+  failure?: ParseFailure;
+  message?: string;
+}> {
   // 截断超长简历
-  const trimmed = rawText.length > RESUME_TEXT_LIMIT
-    ? rawText.slice(0, RESUME_TEXT_LIMIT) + '\n...(已截断)...'
+  const textTruncated = rawText.length > RESUME_TEXT_LIMIT;
+  const trimmed = textTruncated
+    ? rawText.slice(0, RESUME_TEXT_LIMIT) + '\n...(内容过长，已截断)...'
     : rawText;
 
   const userPrompt = `请从以下简历文本中提取结构化 JSON。\n\n# 简历文本\n${trimmed}`;
@@ -292,23 +313,47 @@ export async function parseResumeWithLLM(
   // 用户自定义 Key → 直连；否则走后端中转
   const userKey = keyGetter();
   try {
-    const raw = await Promise.race([
-      userKey
-        ? directCall(userKey, messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1 })
-        : proxiedCall(messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1 }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('LLM 调用超时，已降级到本地解析')), PARSE_TIMEOUT_MS)
-      ),
-    ]);
+    // 抽取任务不需要推理 —— M3 关掉 reasoning 后实测 2.8s / 6.1s,
+    // 比带推理的 16.9s / 24.1s 快一个数量级, 归一化结果一致。
+    const raw = await (userKey
+      ? directCall(userKey, messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1, thinking: 'disabled', timeoutMs: PARSE_TIMEOUT_MS })
+      : proxiedCall(messages, { maxTokens: RESUME_MAX_TOKENS, temperature: 0.1, thinking: 'disabled', timeoutMs: PARSE_TIMEOUT_MS }));
+
     const truncated = raw.finishReason === 'length';
     if (truncated) {
       console.warn('[llmClient] 模型输出被 max_tokens 截断, 结果可能不完整');
     }
-    return { candidate: parseCandidateFromLLM(raw.content, trimmed), truncated };
+    const candidate = parseCandidateFromLLM(raw.content, trimmed);
+    if (!candidate) {
+      return {
+        candidate: null,
+        truncated,
+        textTruncated,
+        failure: 'bad-json',
+        message: 'AI 返回的内容无法解析成 JSON',
+      };
+    }
+    return { candidate, truncated, textTruncated };
   } catch (e) {
+    const failure = classifyParseError(e);
     console.warn('[llmClient] LLM 解析失败，降级到本地解析:', e);
-    return { candidate: null, truncated: false };
+    return {
+      candidate: null,
+      truncated: false,
+      textTruncated,
+      failure,
+      message: e instanceof Error ? e.message : String(e),
+    };
   }
+}
+
+/** 把异常归类 —— 超时 / 网络 / 上游错误要分开, 提示语不一样 */
+function classifyParseError(e: unknown): ParseFailure {
+  const name = e instanceof Error ? e.name : '';
+  const msg = e instanceof Error ? e.message : String(e);
+  if (name === 'TimeoutError' || name === 'AbortError' || msg.includes('超时')) return 'timeout';
+  if (msg.includes('无法连接') || msg.includes('网络') || msg.includes('fetch')) return 'network';
+  return 'upstream';
 }
 
 function buildResumeParsePrompt(rawText: string): string {
@@ -557,13 +602,18 @@ export function parseCandidateFromLLM(raw: string, rawText: string): Candidate |
     : [];
 
   // 解析 skills
-  const skills: string[] = Array.isArray(parsed.skills)
+  const llmSkills: string[] = Array.isArray(parsed.skills)
     ? parsed.skills
         .filter((x: unknown) => typeof x === 'string')
         .map((x: string) => x.trim())
         .filter((x: string) => x.length >= 2 && x.length <= 30)
-        .slice(0, 30)
     : [];
+
+  // Allen 2026-11-25: 技能取「LLM ∪ 本地关键词表」的并集, 不再二选一。
+  //   只取 LLM 的会漏词 —— 抽取类任务关掉推理后技能实测从 38 个掉到 27 个。
+  //   本地那套技术词表只认简历里真实出现过的词 (不含年份/公司名/整句), 干净,
+  //   拿来补漏最合适。
+  const skills = mergeSkills(llmSkills, getLocalCandidate().skills);
 
   return {
     rawText,
@@ -580,6 +630,20 @@ export function parseCandidateFromLLM(raw: string, rawText: string): Candidate |
     projects,
     skills,
   };
+}
+
+/** 技能并集 —— LLM 在前 (它认得冷门词), 本地关键词表补漏, 按小写去重 */
+function mergeSkills(llmSkills: string[], localSkills: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of [...llmSkills, ...localSkills]) {
+    const key = s.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(s.trim());
+    if (out.length >= 40) break;
+  }
+  return out;
 }
 
 // =====================================================
@@ -661,9 +725,21 @@ type CallResult = {
   finishReason: string | null;
 };
 
+type CallOptions = {
+  maxTokens?: number;
+  temperature?: number;
+  /**
+   * 思考开关。抽取类任务传 'disabled' —— M3 关掉 reasoning 实测 6s vs 24s。
+   * 不传 = 保持模型默认 (开推理), 问答/润色这类推理型任务要保持默认。
+   */
+  thinking?: 'disabled' | 'adaptive';
+  /** 单次调用超时 —— 不传就用默认预算 */
+  timeoutMs?: number;
+};
+
 async function proxiedCall(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  options?: { maxTokens?: number; temperature?: number }
+  options?: CallOptions
 ): Promise<CallResult> {
   let response: Response;
   try {
@@ -674,9 +750,15 @@ async function proxiedCall(
         messages,
         max_tokens: options?.maxTokens ?? 800,
         temperature: options?.temperature ?? 0.5,
+        ...(options?.thinking ? { thinking: { type: options.thinking } } : {}),
       }),
+      // 真正取消请求 —— 原来用 Promise.race 只是前端不等了, 请求还在后端跑完,
+      // 白占配额。上游挂住时至少能停下来。
+      signal: AbortSignal.timeout(options?.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS),
     });
   } catch (e) {
+    // 超时要原样抛出去 —— 包成 ApiKeyMissingError 会让用户以为是 Key 配错了
+    if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw e;
     throw new ApiKeyMissingError(
       `无法连接到服务器: ${e instanceof Error ? e.message : '网络错误'}`
     );
@@ -700,7 +782,7 @@ async function proxiedCall(
 async function directCall(
   userKey: string,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  options?: { maxTokens?: number; temperature?: number }
+  options?: CallOptions
 ): Promise<CallResult> {
   const response = await fetch('https://api.minimaxi.com/v1/chat/completions', {
     method: 'POST',
@@ -713,7 +795,9 @@ async function directCall(
       max_tokens: options?.maxTokens ?? 800,
       temperature: options?.temperature ?? 0.5,
       messages,
+      ...(options?.thinking ? { thinking: { type: options.thinking } } : {}),
     }),
+    signal: AbortSignal.timeout(options?.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS),
   });
 
   if (!response.ok) {
