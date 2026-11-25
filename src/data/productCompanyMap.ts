@@ -92,6 +92,65 @@ export const PRODUCT_TO_COMPANY_MAP: Record<string, string> = {
   '联想': '联想', '海尔': '海尔', '美的': '美的', '格力': '格力',
   '宁德时代': '宁德时代', '隆基': '隆基绿能', '比亚迪电子': '比亚迪',
   '顺丰': '顺丰', '中通': '中通快递', '圆通': '圆通速递', '申通': '申通快递', '韵达': '韵达',
+
+  // ===== AI 公司: 产品名/模型名/英文名 → 母公司 (Allen 2026-11-25) =====
+  // 简历上写的是产品名 ("可灵""文心一言""星火") 或英文简称 ("Kimi""StepFun"),
+  // 都要能认出真正的雇主, 否则 Tier 评分会掉到"未识别"。
+  // ===== 字节系 =====
+  '扣子': '字节跳动', 'Coze': '字节跳动', '即梦': '字节跳动', 'Dreamina': '字节跳动',
+  // ===== 阿里系 =====
+  '千问': '阿里巴巴', '通义千问': '阿里巴巴', 'Qwen': '阿里巴巴', '万相': '阿里巴巴',
+  // ===== 腾讯系 =====
+  '混元': '腾讯', '腾讯混元': '腾讯', 'Hunyuan': '腾讯',
+  // ===== 百度系 =====
+  '文心一言': '百度', '文心': '百度', 'ERNIE': '百度', '度晓晓': '百度',
+  // ===== 科大讯飞系 =====
+  '星火': '科大讯飞', '讯飞星火': '科大讯飞',
+  // ===== 快手系 =====
+  '可灵': '快手', '可灵AI': '快手', 'Kling': '快手',
+  // ===== AI 原生公司 =====
+  'Kimi': '月之暗面', 'Moonshot': '月之暗面',
+  'DeepSeek': '深度求索',
+  '海螺AI': 'MiniMax', '海螺': 'MiniMax', 'abab': 'MiniMax',
+  'StepFun': '阶跃星辰',
+  '智谱清言': '智谱', 'GLM': '智谱', 'ChatGLM': '智谱',
+  '日日新': '商汤', 'SenseNova': '商汤', '商量': '商汤',
+  '天工': '昆仑万维', 'Skywork': '昆仑万维',
+  'ModelBest': '面壁智能',
+  'Baichuan': '百川智能',
+  '万智': '零一万物',
+  'Hidream': '智象未来',
+  'Monica': 'Manus',
+  'Lovart': 'Liblib', 'LiblibAI': 'Liblib',
+  'Vidu': '生数科技',
+  'PixVerse': '爱诗科技',
+  'vivix': '灵动时刻',
+  'Today.AI': '此间无限', 'Today AI': '此间无限',
+  'loopit': '涌跃智能',
+  'Elys': '自然选择',
+  // ===== 海外 AI 公司 =====
+  'Gemini': '谷歌', 'DeepMind': '谷歌', 'Google DeepMind': '谷歌',
+  'Claude': 'Anthropic',
+  'ChatGPT': 'OpenAI',
+  'Copilot': '微软', 'Microsoft Copilot': '微软',
+  'AWS': '亚马逊', 'Amazon Web Services': '亚马逊',
+  'Facebook': 'Meta', 'WhatsApp': 'Meta', 'Instagram': 'Meta', 'Llama': 'Meta',
+  // ===== 其他大厂英文名 =====
+  'RedNote': '小红书', 'Xiaohongshu': '小红书',
+  'bilibili': '哔哩哔哩',
+  'miHoYo': '米哈游',
+  'SenseTime': '商汤',
+  'Pony.ai': '小马智行',
+  'WeRide': '文远智行',
+  'Bytedance': '字节跳动',
+  'Ant Group': '蚂蚁集团',
+  // 小写写法 (产品名表是大小写敏感的, 简历里常写成全小写)
+  'deepseek': '深度求索', 'qwen': '阿里巴巴', 'kling': '快手',
+  'claude': 'Anthropic', 'chatgpt': 'OpenAI', 'gemini': '谷歌',
+  'stepfun': '阶跃星辰', 'glm': '智谱', 'vidu': '生数科技',
+  'pixverse': '爱诗科技', 'hidream': '智象未来', 'liblib': 'Liblib',
+  'lovart': 'Liblib', 'coze': '字节跳动', 'modelbest': '面壁智能',
+  'baichuan': '百川智能', 'moonshot': '月之暗面', 'heygen': 'HeyGen',
 };
 
 // 产品/项目/系统词黑名单（命中但不映射到母公司，直接视为非公司名）
@@ -260,7 +319,9 @@ function matchCompanyByProduct(text: string): string | null {
 //   1) 先按 `|` `-` `—` `,` `，` 切分候选名，对每个 segment 独立解析
 //      例: "字节跳动 - 抖音电商" → "字节跳动"
 //      例: "字节跳动|抖音电商后端" → "字节跳动"
-//   2) 多个 segment 都能解析时, 优先取长度最长(更具体)的母公司
+//   2) 多个 segment 都能解析时, 取**最左边**的那个 —— 简历写法是
+//      "公司 - 产品/部门", 公司在左边 (Allen 2026-11-25 修正: 原来取最长,
+//      会被右边的产品名顶掉, "字节跳动 - 可灵" 被认成"快手")
 //   3) 单 segment 解析失败时, 整体走原路径
 //
 // Allen 2026-08-21 增强:
@@ -278,25 +339,24 @@ export function resolveCompanyName(name: string): string | null {
     return PRODUCT_TO_COMPANY_MAP[cleaned];
   }
 
-  // 2) 包含产品名 → 优先匹配长产品名（处理 "字节跳动 - 抖音电商"）
-  const byProduct = matchCompanyByProduct(cleaned);
-  if (byProduct) return byProduct;
-
-  // 3) 多分隔符场景: 按 `|` `-` `—` 切, 选最长的母公司
+  // 2.5) 有分隔符 → 说明是 "公司 - 产品/部门" 结构, 交给分段逻辑。
+  //   不在这里做整串产品匹配, 否则 "字节跳动 - 可灵" 会被右边的产品名
+  //   ("可灵" → 快手) 顶掉, 雇主认错 (Allen 2026-11-25)。
   const segments = cleaned.split(/[|｜\-—–\/、]/).map(s => s.trim()).filter(Boolean);
+
+  // 3) 多分隔符场景: 按 `|` `-` `—` 切, 取**最左边**能解析出来的母公司
+  //   —— 简历写法是 "公司 - 产品/部门", 公司在左边。
   if (segments.length > 1) {
-    let bestParent: string | null = null;
-    let bestLen = 0;
     for (const seg of segments) {
       // 递归 (但跳过 multi-segment 切分, 避免无限嵌套)
       const parent = resolveCompanyNameSingle(seg);
-      if (parent && parent.length > bestLen) {
-        bestParent = parent;
-        bestLen = parent.length;
-      }
+      if (parent) return parent;
     }
-    if (bestParent) return bestParent;
   }
+
+  // 2) 包含产品名 → 优先匹配长产品名（处理 "抖音电商" / "豆包大模型团队"）
+  const byProduct = matchCompanyByProduct(cleaned);
+  if (byProduct) return byProduct;
 
   // 4) 命中纯产品词（无映射）→ 视为非公司名
   if (isProductName(cleaned)) {
@@ -348,6 +408,12 @@ export function buildCompactProductMap(): string {
     '小米': '小米', '华为': '华为',
     '滴滴': '滴滴',
     '蔚来': '蔚来', '理想': '理想汽车', '小鹏': '小鹏汽车',
+    // AI 公司 (Allen 2026-11-25 补: AI 简历上写产品名/英文名的非常多)
+    'Kimi': '月之暗面', 'DeepSeek': '深度求索', 'MiniMax': 'MiniMax',
+    '千问': '阿里巴巴',
+    '混元': '腾讯', '文心一言': '百度', '星火': '科大讯飞', '可灵': '快手',
+    '智谱': '智谱', '阶跃星辰': '阶跃星辰', '商汤': '商汤',
+    'Claude': 'Anthropic', 'ChatGPT': 'OpenAI', 'Gemini': '谷歌',
   };
   return Object.entries(compact).map(([p, c]) => `  ${p} → ${c}`).join('\n');
 }

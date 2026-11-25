@@ -187,27 +187,40 @@ export const DEFAULT_SCHOOL_TIERS: SchoolTier[] = [
 // 公司 Tier 名单 (Allen 提供，2026-06 - AI 行业三梯队)
 // 等级 1 = 最高，等级 3 = 最低
 // =====================================================
+// =====================================================
+// 公司 Tier 名单 (Allen 提供, 2026-11-25 更新)
+//
+// 名单里同一家公司的不同写法都列出来 —— 公司评分用的是
+// "归一化后子串匹配, 长名优先"(见 resolveCompanyTiers),
+// 所以只要简历上写的是其中任一别名, 就能命中同一个 tier。
+//
+// 别名分两类:
+//   1) 公司/品牌名: 字节 / 抖音 / 今日头条 都是字节跳动
+//   2) 英文名/工商简称: ByteDance / Moonshot / 稀宇科技
+// 纯产品名 (豆包/文心一言/星火) 不在这里 —— 它们在 productCompanyMap.ts
+// 里被归一成母公司后再来匹配 tier。
+// =====================================================
 export const DEFAULT_COMPANY_TIERS: CompanyTier[] = [
   {
     tier: 1,
     label: '第一梯队',
     companies: [
       // 国内头部互联网大厂
-      '字节跳动', '字节', '抖音', '今日头条', // 字节跳动/抖音/今日头条 同一家公司
-      '阿里巴巴', '阿里',
-      '腾讯',
+      '字节跳动', '字节', '抖音', '今日头条', 'TikTok', 'ByteDance',
+      '阿里巴巴', '阿里', '蚂蚁集团', '蚂蚁', '淘宝', '天猫', '阿里云', '钉钉',
+      '腾讯', '微信', 'QQ', '腾讯科技',
       // 国内头部 AI 原生企业
       'DeepSeek', '深度求索',
-      'Kimi', '月之暗面', // Kimi 是月之暗面公司的产品，同一家公司
-      'MiniMax', // 公司本体（避免和模型同名混淆，匹配仅当简历写全称/精确）
-      '阶跃星辰',
-      '智谱',
+      'Kimi', '月之暗面', 'Moonshot',
+      'MiniMax', '稀宇科技', '海螺AI',
+      '阶跃星辰', 'StepFun',
+      '智谱', '智谱AI', 'Zhipu',
       // 全球科技巨头与海外顶尖 AI 企业
-      '谷歌', 'Google',
-      'Meta',
+      '谷歌', 'Google', 'Alphabet',
+      'Meta', 'Facebook',
       'OpenAI',
-      'Anthropic',
-      '微软', 'Microsoft',
+      'Anthropic', 'Claude',
+      '微软', 'Microsoft', 'Azure',
       '苹果', 'Apple',
       '亚马逊', 'Amazon', 'AWS',
     ],
@@ -217,50 +230,55 @@ export const DEFAULT_COMPANY_TIERS: CompanyTier[] = [
     label: '第二梯队',
     companies: [
       // 其他互联网大厂
-      '小红书',
-      '百度',
-      '华为',
-      '小米',
-      '快手',
+      '小红书', 'RedNote', 'Xiaohongshu',
+      '百度', 'Baidu',
+      '华为', 'Huawei',
+      '小米', 'Xiaomi',
+      '快手', 'Kuaishou',
       '美团',
-      '京东',
-      'B站', '哔哩哔哩',
-      '米哈游',
-      'Temu', '拼多多',
-      // 上一代 AI 公司
-      '商汤',
-      '旷视', '旷世', // Allen 写"旷世"，补一个常见写法"旷视"
+      '京东', 'JD',
+      'B站', '哔哩哔哩', 'bilibili',
+      '米哈游', 'miHoYo',
+      'Temu', '拼多多', 'PDD',
+      '网易',
+      // 上一代 AI 公司 (四小龙 + 上一代大模型公司)
+      '商汤', 'SenseTime',
+      '旷世', '旷视',
       '依图',
       '云从',
       '第四范式',
-      '科大讯飞',
-      '昆仑万维', '天工',
-      '出门问问',
+      '科大讯飞', 'iFlytek',
+      '昆仑万维', '天工', 'Skywork',
+      '出门问问', 'Mobvoi',
       // 自动驾驶头部
-      '蔚来',
-      '小鹏',
-      '理想',
-      '小马智行',
+      '蔚来', 'NIO',
+      '小鹏', '小鹏汽车', 'XPeng',
+      '理想', '理想汽车', 'Li Auto',
+      '小马智行', 'Pony.ai',
       'Momenta',
-      '文远智行',
+      '文远智行', 'WeRide',
       // 明星 AI native 创业公司
-      '面壁智能',
-      '百川智能',
-      '零一万物',
+      '面壁智能', 'ModelBest',
+      '百川智能', 'Baichuan',
+      '零一万物', '01.AI',
       '智象未来', 'Hidream',
       'Manus',
       'Genspark',
-      'Lovart', 'Liblib',
+      'Lovart', 'Liblib', 'LiblibAI',
       'Vidu', '生数科技',
       'PixVerse', '爱诗科技',
       'HeyGen',
       'MiroMind',
       'Anuttacon',
-      'Sand.ai',
+      'Sand.ai', 'SandAI',
       'VAST',
       'Meshy',
       'Plaud',
       'Looki',
+      'vivix', '灵动时刻',
+      'Today.AI', '此间无限',
+      'loopit', '涌跃智能',
+      '自然选择', 'EVE', 'Elys',
       '沐言智语',
       'YouWare', '新言意码',
     ],
@@ -269,9 +287,18 @@ export const DEFAULT_COMPANY_TIERS: CompanyTier[] = [
     tier: 3,
     label: '第三梯队',
     companies: [
+      // 中小厂 / 腰部公司 (AI 岗常见的非头部雇主)
       '携程',
       '陌陌',
       '知乎',
+      '58同城',
+      'Boss直聘',
+      '虎牙',
+      '斗鱼',
+      'Keep',
+      '猿辅导',
+      '作业帮',
+      '金山办公',
     ],
   },
 ];

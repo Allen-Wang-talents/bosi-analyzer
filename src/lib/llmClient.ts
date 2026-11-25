@@ -93,6 +93,26 @@ const RESUME_PARSE_SYSTEM_PROMPT = `你是博思AI人才推荐网的资深猎头
   蔚来 → 蔚来
   理想 → 理想汽车
   小鹏 → 小鹏汽车
+  扣子 → 字节跳动
+  即梦 → 字节跳动
+  千问 → 阿里巴巴
+  通义千问 → 阿里巴巴
+  混元 → 腾讯
+  文心一言 → 百度
+  星火 → 科大讯飞
+  可灵 → 快手
+  Kimi → 月之暗面
+  DeepSeek → 深度求索
+  日日新 → 商汤
+  天工 → 昆仑万维
+  StepFun → 阶跃星辰
+  智谱清言 → 智谱
+  Vidu → 生数科技
+  PixVerse → 爱诗科技
+  Lovart → Liblib
+  Claude → Anthropic
+  ChatGPT → OpenAI
+  Gemini → 谷歌
 
 输出格式（严格遵守）：
 - 纯 JSON 对象，不要代码块、不要任何前言/后语、不要解释、不要 markdown

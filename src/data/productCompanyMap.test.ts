@@ -27,3 +27,21 @@ describe('公司名解析: 拉丁产品键不能子串乱匹配', () => {
     expect(resolveCompanyName('蚂蚁')).toBe('蚂蚁集团');
   });
 });
+
+describe('公司名解析: "公司 - 产品/部门" 取左边的公司', () => {
+  // Allen 2026-11-25: 原来按"最长的母公司"选, 右边是产品名时会顶掉真正的雇主
+  //   "字节跳动 - 可灵" → 被认成 "快手"
+  it('雇主在左, 产品在右', () => {
+    expect(resolveCompanyName('字节跳动 - 可灵')).toBe('字节跳动');
+    expect(resolveCompanyName('字节跳动 - 抖音电商')).toBe('字节跳动');
+    expect(resolveCompanyName('腾讯 - 微信')).toBe('腾讯');
+    expect(resolveCompanyName('百度 - 文心一言')).toBe('百度');
+  });
+
+  it('左边本身就是产品时, 仍然归一到母公司', () => {
+    expect(resolveCompanyName('可灵')).toBe('快手');
+    expect(resolveCompanyName('文心一言')).toBe('百度');
+    expect(resolveCompanyName('星火')).toBe('科大讯飞');
+    expect(resolveCompanyName('Kimi')).toBe('月之暗面');
+  });
+});
