@@ -76,21 +76,30 @@ async function readPdfText(file: File): Promise<string> {
  *
  * 换行靠两个信号: item 自带的 hasEOL, 以及 item 的 transform[5] (基线 y 坐标) ——
  * 同一行的文字 y 基本相同, 差值超过行高一半就认为是换了一行。
+ *
+ * 空格靠横向间距判断, 不能按 item 边界硬加:
+ *   PDF 里同一个词常被拆成几个 item (不同字体分段), item 之间横向间距是 0 ——
+ *   一律加空格会让 "项目经历" 变成 "项 目经历", section 标题就认不出来了。
+ *   真有空格的地方间距明显大于 0 (或干脆就是一个 " " 的 item)。
  */
-function joinPdfItems(items: unknown[]): string {
+export function joinPdfItems(items: unknown[]): string {
   let text = '';
   let lastY: number | null = null;
+  let lastEndX: number | null = null;
 
   for (const raw of items) {
     const item = raw as {
       str?: string;
       hasEOL?: boolean;
       height?: number;
+      width?: number;
       transform?: number[];
     };
     if (typeof item.str !== 'string' || !item.str) continue;
 
     const y = typeof item.transform?.[5] === 'number' ? item.transform[5] : null;
+    const x = typeof item.transform?.[4] === 'number' ? item.transform[4] : null;
+
     if (y !== null && lastY !== null) {
       // 行高一半作为容差 —— 同一行里混排不同字号时基线会有微小偏移
       const tolerance = Math.max(2, (item.height ?? 10) * 0.5);
@@ -98,19 +107,43 @@ function joinPdfItems(items: unknown[]): string {
         text += '\n';
       }
     }
-    if (text && !text.endsWith('\n') && !text.endsWith(' ')) {
-      text += ' ';
+
+    const needSpace = text && !text.endsWith('\n') && !text.endsWith(' ');
+    if (needSpace) {
+      if (x !== null && lastEndX !== null) {
+        // 横向间距大于 2pt 才算真有个空格
+        if (x - lastEndX > SPACE_GAP_PT) text += ' ';
+      } else {
+        text += ' ';
+      }
     }
     text += item.str;
     if (y !== null) lastY = y;
+    if (x !== null) lastEndX = x + (typeof item.width === 'number' ? item.width : 0);
 
     if (item.hasEOL) {
       text += '\n';
       lastY = null;
+      lastEndX = null;
     }
   }
 
-  return text;
+  return normalizeCjkVariants(text);
+}
+
+/** 判断"这里原本有个空格"的横向间距阈值 (PDF point) */
+const SPACE_GAP_PT = 2;
+
+/**
+ * PDF 字体子集化经常把汉字映射成"康熙部首"或"兼容汉字"——
+ * "项目" 变成 "项⽬"、"工作" 变成 "⼯作"。这些字符肉眼一样, 但字符串比较
+ * 完全不匹配 (section 标题、工作年限正则全都会失效)。
+ * 它们都有 Unicode 兼容分解, NFKC 一下就还原成正常汉字。
+ */
+const CJK_VARIANT_RE = /[\u2E80-\u2EF3\u2F00-\u2FD5\u{20000}-\u{2A6DF}\uF900-\uFAFF\uFE30-\uFE4F]/gu;
+
+function normalizeCjkVariants(text: string): string {
+  return text.replace(CJK_VARIANT_RE, (ch) => ch.normalize('NFKC'));
 }
 
 // 扫描件 PDF：每页渲染到 canvas，再 OCR

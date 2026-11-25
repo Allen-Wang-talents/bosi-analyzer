@@ -9,7 +9,7 @@
 // 这些测试确保修复后两个 bug 不会再回归。
 // =====================================================
 import { describe, it, expect } from 'vitest';
-import { parseResumeText } from './parseResume';
+import { parseResumeText, joinPdfItems } from './parseResume';
 import { resolveCompanyName, isProductName, PRODUCT_TO_COMPANY_MAP, PRODUCT_NOISE_KEYWORDS } from '@/data/productCompanyMap';
 
 // 2026 是当前年份, 测试用相对值
@@ -335,5 +335,80 @@ describe('回归 4: 项目 section 在 "专业技能" / "自我评价" 处正确
       '多模态商品理解大模型',
       '实时推荐特征平台',
     ]);
+  });
+});
+
+describe('回归 5: PDF text items 还原换行', () => {
+  it('同一行的 item 拼在一起, y 坐标变了就换行', () => {
+    // 模拟 pdfjs 的 text item: transform[5] 是基线 y 坐标
+    const items = [
+      { str: '2022.04 - 至今', height: 10, transform: [1, 0, 0, 1, 10, 700], hasEOL: false },
+      { str: '字节跳动', height: 10, transform: [1, 0, 0, 1, 90, 700], hasEOL: false },
+      { str: '高级算法工程师', height: 10, transform: [1, 0, 0, 1, 170, 700], hasEOL: false },
+      { str: '负责推荐系统', height: 10, transform: [1, 0, 0, 1, 10, 685], hasEOL: false },
+      { str: '2020.03 - 2022.03', height: 10, transform: [1, 0, 0, 1, 10, 670], hasEOL: false },
+      { str: '美团', height: 10, transform: [1, 0, 0, 1, 90, 670], hasEOL: true },
+    ];
+
+    const text = joinPdfItems(items);
+    const lines = text.split('\n').filter(Boolean);
+
+    // 3 行, 不是 1 行
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toBe('2022.04 - 至今 字节跳动 高级算法工程师');
+    expect(lines[1]).toBe('负责推荐系统');
+    // hasEOL 也要能断行
+    expect(lines[2]).toContain('美团');
+  });
+
+  it('PDF 式文本直接喂给解析器能抽出工作经历', () => {
+    const items = [
+      { str: '工作经历', height: 10, transform: [1, 0, 0, 1, 10, 700], hasEOL: false },
+      { str: '2022.04 - 至今', height: 10, transform: [1, 0, 0, 1, 10, 685], hasEOL: false },
+      { str: '字节跳动', height: 10, transform: [1, 0, 0, 1, 90, 685], hasEOL: false },
+      { str: '高级算法工程师', height: 10, transform: [1, 0, 0, 1, 170, 685], hasEOL: true },
+      { str: '2018.07 - 2020.02', height: 10, transform: [1, 0, 0, 1, 10, 670], hasEOL: false },
+      { str: '京东', height: 10, transform: [1, 0, 0, 1, 90, 670], hasEOL: false },
+      { str: '数据挖掘工程师', height: 10, transform: [1, 0, 0, 1, 170, 670], hasEOL: true },
+    ];
+
+    const result = parseResumeText(joinPdfItems(items));
+    expect(result.workHistory.length).toBe(2);
+    expect(result.workHistory.map((w) => w.company)).toEqual(
+      expect.arrayContaining(['字节跳动', '京东']),
+    );
+  });
+});
+
+describe('回归 6: PDF 字体子集化产生的"康熙部首"要还原成正常汉字', () => {
+  it('⽯ / ⽤ / ⽬ 这类字符 NFKC 还原后 section 标题才认得出来', () => {
+    // 真实 PDF 抽取出来的样子: "⼯作经历" / "项⽬经历"
+    const items = [
+      { str: '⼯', height: 11, width: 11, transform: [1, 0, 0, 1, 33, 700], hasEOL: false },
+      { str: '作经历', height: 11, width: 33, transform: [1, 0, 0, 1, 44, 700], hasEOL: true },
+      { str: '项', height: 11, width: 11, transform: [1, 0, 0, 1, 33, 685], hasEOL: false },
+      { str: '⽬', height: 11, width: 11, transform: [1, 0, 0, 1, 44, 685], hasEOL: false },
+      { str: '经历', height: 11, width: 22, transform: [1, 0, 0, 1, 55, 685], hasEOL: true },
+    ];
+
+    const text = joinPdfItems(items);
+    expect(text).toContain('工作经历');
+    expect(text).toContain('项目经历');
+    expect(text).not.toContain('⽬');
+  });
+});
+
+describe('回归 7: PDF 里被拆开的词不能多出空格', () => {
+  it('横向间距为 0 的 item 直接拼, 间距大的才补空格', () => {
+    const items = [
+      // 一个词被拆成两个 item (不同字体分段), 横向间距 0
+      { str: '字节', height: 11, width: 22, transform: [1, 0, 0, 1, 33, 700], hasEOL: false },
+      { str: '跳动', height: 11, width: 22, transform: [1, 0, 0, 1, 55, 700], hasEOL: false },
+      // 真的隔开一段 (间距 12pt) —— 这里是职位名
+      { str: '算法工程师', height: 11, width: 55, transform: [1, 0, 0, 1, 100, 700], hasEOL: true },
+    ];
+
+    const text = joinPdfItems(items);
+    expect(text.trim()).toBe('字节跳动 算法工程师');
   });
 });
