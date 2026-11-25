@@ -183,6 +183,13 @@ jobs:
             echo "::error::简历解析太慢 (${elapsed}s) —— 前端 55 秒超时会挂"
             exit 1
           }
+          # 抽取任务不该有推理 —— reasoning 吃掉 60% 的 token 预算, 还会把
+          # 耗时从 4s 拉到 24s (前端 55s 超时会直接挂掉)。
+          reasoning=$(jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' /tmp/parse)
+          [ "$reasoning" = "0" ] || {
+            echo "::error::简历解析还在跑推理 (reasoning_tokens=$reasoning) —— thinking 关不掉, 耗时会超时"
+            exit 1
+          }
 
           jq -r '.content // ""' /tmp/parse > /tmp/candidate.json
           jq -e '(.workHistory // []) | length > 0' /tmp/candidate.json > /dev/null || {
